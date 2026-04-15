@@ -1,9 +1,9 @@
 # Status
 
 **Current phase:** Phase 2 — Feature Engineering (Branch C)
-**Last completed:** MTF feature experiment (v0.3) with walk-forward CV
+**Last completed:** Fold Regime Diagnosis (Notebook 04)
 **Decision:** Both models trigger Branch C - Feature Engineering Required
-**Next step:** Choose feature engineering approach or proceed with current model despite risks
+**Next step:** Add regime gating features based on diagnosis findings
 
 ---
 
@@ -55,6 +55,74 @@ Added 5 multi-timeframe alignment features from JCAMP_FxScalper v4.6.0:
 - ✗ SHORT consistency actually worsened
 
 **Key Insight:** v4.6.0's "fresh flip" concept (`bars_since_tf_fast_flip`) validated as highest MTF feature importance, but MTF alignment alone doesn't capture regime quality. Bad folds are **regime-specific failures** that MTF doesn't address.
+
+---
+
+## Fold Regime Diagnosis (Notebook 04 - Apr 15, 2026)
+
+**Purpose:** Diagnose WHY specific folds fail — what regime characteristics distinguish good folds from bad?
+
+**Notebook:** `notebooks/04_fold_regime_diagnosis.ipynb`
+
+### Fold Status Reference (Threshold 0.55)
+
+| Fold | LONG | SHORT | Regime Characterization |
+|------|------|-------|-------------------------|
+| 1 | Bad | Bad | High volatility, mixed alignment |
+| 2 | Good | Good | Low volatility, bearish aligned |
+| 3 | Good | Bad | Low volatility, bullish aligned |
+| 4 | Bad | Good | Medium volatility, balanced alignment |
+| 5 | Good | Bad | High volatility, bullish aligned |
+
+### Key Finding: LONG Model Regime Discriminators
+
+| Feature | Good Folds Mean | Bad Folds Mean | % Diff | Interpretation |
+|---------|-----------------|----------------|--------|----------------|
+| `mtf_alignment_score` | -0.04 | **+0.61** | +1469% | Bad LONG folds are MORE bullish |
+| `mtf_alignment_duration` | -1.5 | **+11.5** | +860% | Bad folds have longer bull persistence |
+| `dist_sma_m5_200` | -0.19 | +0.33 | +278% | Price above SMA in bad folds |
+| `slope_sma_h1_200` | ~0 | +0.00013 | +238% | H1 trending up in bad folds |
+
+**Surprising Result:** LONG model fails in MORE bullish regimes. This suggests:
+- Model enters too late in established trends (chasing)
+- Bullish alignment alone doesn't guarantee quality entries
+- Need regime quality filter, not just direction
+
+### Key Finding: SHORT Model Regime Discriminators
+
+| Feature | Good Folds Mean | Bad Folds Mean | % Diff | Interpretation |
+|---------|-----------------|----------------|--------|----------------|
+| `slope_sma_h1_200` | -0.00005 | **+0.00015** | +428% | H1 uptrend kills shorts |
+| `mtf_alignment_score` | -0.91 | +0.97 | +206% | Can't short bullish regimes |
+| `mtf_alignment_duration` | -23 | +22 | +193% | Persistent bull = bad for shorts |
+| `dist_sma_m5_200` | -1.18 | +0.82 | +170% | Price position matters |
+
+**Expected Result:** SHORT fails when market is in uptrend (positive H1 slope, bullish MTF alignment).
+
+### Root Cause Identified
+
+1. **`mtf_alignment_duration`** is the strongest regime discriminator for BOTH directions
+2. **`slope_sma_h1_200`** is critical for SHORT model — H1 trend direction determines success
+3. Model lacks **regime quality filter** — trades all bullish setups equally, even stale ones
+
+### Recommended Regime Features
+
+Based on diagnosis, add these features for Phase 3:
+
+1. **`h1_slope_regime`** (categorical: up/flat/down) — Gate SHORT trades
+2. **`alignment_freshness`** (bars since alignment established) — Avoid stale setups
+3. **`trend_maturity`** (early/mid/late in trend) — Avoid late entries
+4. **`regime_volatility_percentile`** (ATR percentile rank) — Context-aware sizing
+
+### Outputs Generated
+
+All saved to `outputs/phase2_fold_diagnosis/`:
+- `fold_overview_chart.png` — Price with fold overlays
+- `fold_regime_stats.csv` — 21 metrics per fold
+- `long_good_vs_bad_comparison.csv` — LONG regime analysis
+- `short_good_vs_bad_comparison.csv` — SHORT regime analysis
+- `feature_distributions_long_good_vs_bad.png` — Distribution overlays
+- `feature_distributions_short_good_vs_bad.png` — Distribution overlays
 
 ---
 
@@ -267,10 +335,17 @@ MTF features tell us **direction** but not **regime quality**.
 - `PHASE2_MTF_EXPERIMENT.md` - Complete MTF experiment analysis
 - `DataCollector_v0.3_patch.md` - MTF patch specification
 
+**Notebooks:**
+- `notebooks/04_fold_regime_diagnosis.ipynb` - Fold regime analysis
+
 **Results:**
 - `notebooks/outputs/phase2_decision/walk_forward_multi_threshold_long.csv` - v0.3 LONG results
 - `notebooks/outputs/phase2_decision/walk_forward_multi_threshold_short.csv` - v0.3 SHORT results
 - `notebooks/outputs/phase2_decision/fold_equity_curves_*_thr*.png` - 8 equity curve plots
+- `outputs/phase2_fold_diagnosis/fold_regime_stats.csv` - Per-fold regime metrics
+- `outputs/phase2_fold_diagnosis/long_good_vs_bad_comparison.csv` - LONG regime analysis
+- `outputs/phase2_fold_diagnosis/short_good_vs_bad_comparison.csv` - SHORT regime analysis
+- `outputs/phase2_fold_diagnosis/*.png` - Fold overview and distribution charts
 
 ---
 
