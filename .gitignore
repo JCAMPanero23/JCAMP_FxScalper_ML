@@ -32,7 +32,7 @@ MANIFEST
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
+# Note: We DO track *.ipynb notebooks in this project
 
 # Virtual environments
 venv/

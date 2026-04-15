@@ -1,0 +1,195 @@
+======================================================================
+Phase 2 - CORRECTED Analysis with Fixed Metrics
+======================================================================
+
+1. Loading data...
+   Train/CV: 204,105 rows
+   Features: 39
+
+======================================================================
+2. LONG Model - Baseline 70/30 Split
+======================================================================
+
+Training LONG model (tuned hyperparameters)...
+
+=== Model Evaluation ===
+ROC-AUC:         0.5296
+Accuracy:        0.6715
+Predicted win%:  6.4%
+Actual win%:     30.9%
+Samples:         61,232
+
+--- LONG - Trading Metrics at Various Thresholds (CORRECTED) ---
+ threshold   trades  win_rate      pf  expectancy      net_R
+----------------------------------------------------------------------
+      0.50     3946    34.62%    1.00      -0.002       -5.8
+      0.55     2383    35.75%    1.05       0.033       77.7
+      0.60     1403    38.20%    1.17       0.106      148.9
+      0.65      812    40.89%    1.30       0.187      151.5
+      0.70      442    40.05%    1.26       0.161       71.3
+
+Generating threshold sensitivity plot for LONG...
+   Saved to: long_threshold_sensitivity.png
+
+Profitable threshold range: 0.52 to 0.80
+Plateau width: 0.28
+
+======================================================================
+3. SHORT Model - Baseline 70/30 Split
+======================================================================
+
+Training SHORT model (tuned hyperparameters)...
+
+=== Model Evaluation ===
+ROC-AUC:         0.5461
+Accuracy:        0.6771
+Predicted win%:  6.9%
+Actual win%:     30.3%
+Samples:         61,232
+
+[OK] Sanity check passed: LONG AUC=0.5296, SHORT AUC=0.5461
+
+--- SHORT - Trading Metrics at Various Thresholds (CORRECTED) ---
+ threshold   trades  win_rate      pf  expectancy      net_R
+----------------------------------------------------------------------
+      0.50     4201    35.59%    1.04       0.028      116.0
+      0.55     2316    36.57%    1.09       0.057      132.4
+      0.60     1222    39.53%    1.23       0.146      178.1
+      0.65      612    43.30%    1.44       0.259      158.5
+      0.70      315    45.71%    1.59       0.331      104.4
+
+Generating threshold sensitivity plot for SHORT...
+   Saved to: short_threshold_sensitivity.png
+
+Profitable threshold range: 0.45 to 0.77
+Plateau width: 0.32
+
+======================================================================
+4. Walk-Forward CV - LONG (CORRECTED METRICS)
+======================================================================
+
+Running 6-fold CV at threshold = 0.55...
+
+--- Fold 1/6 ---
+  ROC-AUC: 0.4915
+  Trades: 857
+  Win rate: 30.5%
+  PF: 0.83
+  Expectancy: -0.126R
+
+--- Fold 2/6 ---
+  ROC-AUC: 0.5210
+  Trades: 292
+  Win rate: 36.3%
+  PF: 1.07
+  Expectancy: +0.049R
+
+--- Fold 3/6 ---
+  ROC-AUC: 0.5634
+  Trades: 247
+  Win rate: 43.7%
+  PF: 1.46
+  Expectancy: +0.272R
+
+--- Fold 4/6 ---
+  ROC-AUC: 0.5369
+  Trades: 779
+  Win rate: 24.8%
+  PF: 0.62
+  Expectancy: -0.297R
+
+--- Fold 5/6 ---
+  ROC-AUC: 0.5104
+  Trades: 229
+  Win rate: 40.2%
+  PF: 1.27
+  Expectancy: +0.165R
+
+======================================================================
+LONG - Walk-Forward CV Summary (CORRECTED)
+======================================================================
+ fold  roc_auc  n_trades  win_rate  profit_factor  expectancy_r  net_profit_r
+    1 0.491528       857    0.3046         0.8253       -0.1263       -108.28
+    2 0.521004       292    0.3630         1.0740        0.0490         14.32
+    3 0.563411       247    0.4372         1.4643        0.2717         67.12
+    4 0.536873       779    0.2478         0.6207       -0.2967       -231.16
+    5 0.510363       229    0.4017         1.2656        0.1652         37.84
+
+Mean ROC-AUC: 0.5246 ± 0.0272
+Mean Expectancy: +0.013R
+Positive folds: 3/6
+
+======================================================================
+5. Walk-Forward CV - SHORT (CORRECTED METRICS)
+======================================================================
+
+Running 6-fold CV at threshold = 0.55...
+
+--- Fold 1/6 ---
+  ROC-AUC: 0.5427
+  Trades: 581
+  Win rate: 35.5%
+  PF: 1.04
+  Expectancy: +0.024R
+
+--- Fold 2/6 ---
+  ROC-AUC: 0.5841
+  Trades: 506
+  Win rate: 40.1%
+  PF: 1.26
+  Expectancy: +0.164R
+
+--- Fold 3/6 ---
+  ROC-AUC: 0.5291
+  Trades: 304
+  Win rate: 31.6%
+  PF: 0.87
+  Expectancy: -0.093R
+
+--- Fold 4/6 ---
+  ROC-AUC: 0.5391
+  Trades: 172
+  Win rate: 57.6%
+  PF: 2.56
+  Expectancy: +0.687R
+
+--- Fold 5/6 ---
+  ROC-AUC: 0.4987
+  Trades: 308
+  Win rate: 22.4%
+  PF: 0.54
+  Expectancy: -0.368R
+
+======================================================================
+SHORT - Walk-Forward CV Summary (CORRECTED)
+======================================================================
+ fold  roc_auc  n_trades  win_rate  profit_factor  expectancy_r  net_profit_r
+    1 0.542657       581    0.3546         1.0353        0.0237         13.76
+    2 0.584139       506    0.4012         1.2626        0.1636         82.76
+    3 0.529093       304    0.3158         0.8698       -0.0926        -28.16
+    4 0.539148       172    0.5756         2.5558        0.6867        118.12
+    5 0.498725       308    0.2240         0.5441       -0.3679       -113.32
+
+Mean ROC-AUC: 0.5388 ± 0.0307
+Mean Expectancy: +0.083R
+Positive folds: 3/6
+
+======================================================================
+FINAL ASSESSMENT - Phase 2 with CORRECTED Metrics
+======================================================================
+
+LONG Model:
+  ROC-AUC: 0.5246
+  Expectancy: +0.013R
+  Positive folds: 3/6
+  Plateau width: 0.28
+
+SHORT Model:
+  ROC-AUC: 0.5388
+  Expectancy: +0.083R
+  Positive folds: 3/6
+  Plateau width: 0.32
+
+======================================================================
+Analysis complete. Review results above.
+======================================================================

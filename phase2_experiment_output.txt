@@ -1,0 +1,138 @@
+======================================================================
+Phase 2 Decision - Multi-Threshold Walk-Forward Experiment
+======================================================================
+
+Loading data...
+Train/CV: 204,105 rows (Jan 2023 - Sep 2025)
+Features: 39
+CV: 6 folds, embargo=48 bars
+
+======================================================================
+STEP 2: Fix Fold 6 - Test with single threshold first
+======================================================================
+
+Testing LONG at threshold=0.55 to verify 6 folds...
+  Fold 1: 33,969 train, 5,102 test samples
+  Fold 2: 67,986 train, 5,102 test samples
+  Fold 3: 102,003 train, 5,102 test samples
+  Fold 4: 136,020 train, 5,102 test samples
+  Fold 5: 170,037 train, 5,102 test samples
+
+[WARN] Only 5 folds generated (expected 6)
+
+======================================================================
+STEP 3-4: Multi-Threshold Experiment
+======================================================================
+
+Running LONG...
+
+======================================================================
+LONG - Multi-Threshold Walk-Forward
+======================================================================
+
+--- Threshold = 0.55 ---
+  Fold 1:  857 trades,  30.5% WR, PF= 0.83, Exp= -0.126R, NetR=  -108.3
+  Fold 2:  292 trades,  36.3% WR, PF= 1.07, Exp= +0.049R, NetR=   +14.3
+  Fold 3:  247 trades,  43.7% WR, PF= 1.46, Exp= +0.272R, NetR=   +67.1
+  Fold 4:  779 trades,  24.8% WR, PF= 0.62, Exp= -0.297R, NetR=  -231.2
+  Fold 5:  229 trades,  40.2% WR, PF= 1.27, Exp= +0.165R, NetR=   +37.8
+
+--- Threshold = 0.6 ---
+  Fold 1:  659 trades,  33.2% WR, PF= 0.94, Exp= -0.043R, NetR=   -28.4
+  Fold 2:  193 trades,  37.3% WR, PF= 1.12, Exp= +0.079R, NetR=   +15.3
+  Fold 3:  137 trades,  49.6% WR, PF= 1.86, Exp= +0.449R, NetR=   +61.5
+  Fold 4:  571 trades,  23.3% WR, PF= 0.57, Exp= -0.341R, NetR=  -194.8
+  Fold 5:  125 trades,  36.0% WR, PF= 1.06, Exp= +0.040R, NetR=    +5.0
+
+--- Threshold = 0.65 ---
+  Fold 1:  486 trades,  34.8% WR, PF= 1.00, Exp= +0.003R, NetR=    +1.6
+  Fold 2:  132 trades,  37.1% WR, PF= 1.11, Exp= +0.074R, NetR=    +9.7
+  Fold 3:   72 trades,  59.7% WR, PF= 2.79, Exp= +0.752R, NetR=   +54.1
+  Fold 4:  426 trades,  24.6% WR, PF= 0.62, Exp= -0.301R, NetR=  -128.0
+  Fold 5:   79 trades,  22.8% WR, PF= 0.56, Exp= -0.356R, NetR=   -28.2
+
+--- Threshold = 0.7 ---
+  Fold 1:  344 trades,  36.9% WR, PF= 1.10, Exp= +0.068R, NetR=   +23.2
+  Fold 2:   85 trades,  40.0% WR, PF= 1.26, Exp= +0.160R, NetR=   +13.6
+  Fold 3:   44 trades,  52.3% WR, PF= 2.06, Exp= +0.528R, NetR=   +23.2
+  Fold 4:  300 trades,  25.3% WR, PF= 0.64, Exp= -0.280R, NetR=   -84.0
+  Fold 5:   39 trades,   2.6% WR, PF= 0.05, Exp= -0.963R, NetR=   -37.6
+
+[OK] Saved: notebooks\outputs\phase2_decision\walk_forward_multi_threshold_long.csv
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_long_thr0.55.png
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_long_thr0.6.png
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_long_thr0.65.png
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_long_thr0.7.png
+
+Running SHORT...
+
+======================================================================
+SHORT - Multi-Threshold Walk-Forward
+======================================================================
+
+--- Threshold = 0.55 ---
+  Fold 1:  581 trades,  35.5% WR, PF= 1.04, Exp= +0.024R, NetR=   +13.8
+  Fold 2:  506 trades,  40.1% WR, PF= 1.26, Exp= +0.164R, NetR=   +82.8
+  Fold 3:  304 trades,  31.6% WR, PF= 0.87, Exp= -0.093R, NetR=   -28.2
+  Fold 4:  172 trades,  57.6% WR, PF= 2.56, Exp= +0.687R, NetR=  +118.1
+  Fold 5:  308 trades,  22.4% WR, PF= 0.54, Exp= -0.368R, NetR=  -113.3
+
+--- Threshold = 0.6 ---
+  Fold 1:  429 trades,  34.7% WR, PF= 1.00, Exp= +0.002R, NetR=    +0.8
+  Fold 2:  317 trades,  41.3% WR, PF= 1.33, Exp= +0.200R, NetR=   +63.3
+  Fold 3:  199 trades,  34.2% WR, PF= 0.98, Exp= -0.015R, NetR=    -3.0
+  Fold 4:  107 trades,  62.6% WR, PF= 3.16, Exp= +0.839R, NetR=   +89.7
+  Fold 5:  207 trades,  23.2% WR, PF= 0.57, Exp= -0.344R, NetR=   -71.3
+
+--- Threshold = 0.65 ---
+  Fold 1:  302 trades,  32.5% WR, PF= 0.91, Exp= -0.067R, NetR=   -20.1
+  Fold 2:  176 trades,  42.0% WR, PF= 1.37, Exp= +0.221R, NetR=   +39.0
+  Fold 3:  136 trades,  30.1% WR, PF= 0.81, Exp= -0.136R, NetR=   -18.4
+  Fold 4:   72 trades,  70.8% WR, PF= 4.58, Exp= +1.085R, NetR=   +78.1
+  Fold 5:  153 trades,  20.9% WR, PF= 0.50, Exp= -0.412R, NetR=   -63.1
+
+--- Threshold = 0.7 ---
+  Fold 1:  190 trades,  26.3% WR, PF= 0.67, Exp= -0.251R, NetR=   -47.6
+  Fold 2:   74 trades,  52.7% WR, PF= 2.10, Exp= +0.541R, NetR=   +40.0
+  Fold 3:   72 trades,  29.2% WR, PF= 0.78, Exp= -0.165R, NetR=   -11.9
+  Fold 4:   53 trades,  73.6% WR, PF= 5.25, Exp= +1.167R, NetR=   +61.9
+  Fold 5:  105 trades,  20.9% WR, PF= 0.50, Exp= -0.411R, NetR=   -43.2
+
+[OK] Saved: notebooks\outputs\phase2_decision\walk_forward_multi_threshold_short.csv
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_short_thr0.55.png
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_short_thr0.6.png
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_short_thr0.65.png
+[OK] Saved: notebooks\outputs\phase2_decision\fold_equity_curves_short_thr0.7.png
+
+======================================================================
+STEP 6: Summary Tables
+======================================================================
+
+### LONG — Walk-forward across thresholds
+
+Traceback (most recent call last):
+  File "C:\Python314\Lib\site-packages\pandas\compat\_optional.py", line 135, in import_optional_dependency
+    module = importlib.import_module(name)
+  File "C:\Python314\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1335, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'tabulate'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\JCAMP_FxScalper_ML\phase2_multi_threshold_experiment.py", line 226, in <module>
+    summary_long = generate_summary_table(results_long, "LONG")
+  File "D:\JCAMP_FxScalper_ML\phase2_multi_threshold_experiment.py", line 222, in generate_summary_table
+    print(summary_df.to_markdown(index=False))
+          ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Python314\Lib\site-packages\pandas\util\_decorators.py", line 333, in wrapper
+    return func(*args, **kwargs)
+  File "C:\Python314\Lib\site-packages\pandas\core\frame.py", line 2994, in to_markdown
+    tabulate = import_optional_dependency("tabulate")
+  File "C:\Python314\Lib\site-packages\pandas\compat\_optional.py", line 138, in import_optional_dependency
+    raise ImportError(msg)
+ImportError: Missing optional dependency 'tabulate'.  Use pip or conda to install tabulate.

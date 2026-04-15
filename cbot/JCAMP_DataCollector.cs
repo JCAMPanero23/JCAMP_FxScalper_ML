@@ -1,5 +1,5 @@
 // =============================================================================
-// JCAMP_DataCollector v0.2
+// JCAMP_DataCollector v0.3
 // -----------------------------------------------------------------------------
 // Purpose: Pure observation cBot. Logs M5 features + triple-barrier outcomes
 //          to CSV for offline ML training (LightGBM in Python).
@@ -11,6 +11,13 @@
 // TF     : M5 (set chart to M5 before running)
 //
 // CHANGELOG
+//   v0.3 (2026-04-14)
+//     - FEATURE: Added 5 MTF alignment features derived from v4.6.0 logic.
+//       mtf_alignment_score, mtf_stacking_score, bars_since_tf_fast_flip,
+//       tf_fast_flip_direction, mtf_alignment_duration. Uses M5/M15/M30/H1
+//       with SMA 275 on M5 and SMA 200 on HTFs (existing indicators).
+//     - STATE: Added _prevM15Alignment, _lastFlipBarIdx, _lastFlipDirection
+//       for cross-bar tracking. Reset on OnStart.
 //   v0.2 (2026-04-12)
 //     - FIX: Off-by-one bar indexing. OnBar() fires when a NEW bar opens, so
 //            the just-closed bar is at Count-2, not Count-1. Previously bar0
@@ -78,6 +85,16 @@ namespace cAlgo.Robots
         private StreamWriter _csv;
         private bool _headerWritten = false;
 
+        // ----- MTF state tracking (v0.3) --------------------------------------
+        // Track M15 alignment across bars to detect flips (v4.6.0-style trigger)
+        private string _prevM15Alignment = "";
+        private int    _lastFlipBarIdx   = -1;     // M5 bar index where M15 last flipped
+        private int    _lastFlipDirection = 0;     // +1 = flipped to BUY, -1 = flipped to SELL
+
+        // Track MTF alignment state persistence across bars
+        private int _prevAlignmentScore  = 0;      // last bar's alignment score
+        private int _alignmentRunLength  = 0;      // signed: + if bull-aligned run, - if bear-aligned run
+
         protected override void OnStart()
         {
             // ---- Init higher TF bars ----------------------------------------
@@ -114,6 +131,13 @@ namespace cAlgo.Robots
             var fname = $"DataCollector_{Symbol.Name}_M5_{Server.Time:yyyyMMdd_HHmmss}.csv";
             _csv = new StreamWriter(Path.Combine(OutputFolder, fname));
             Print($"DataCollector started. Logging to {fname}");
+
+            // ---- Reset MTF tracking state ------------------------------------
+            _prevM15Alignment    = "";
+            _lastFlipBarIdx      = -1;
+            _lastFlipDirection   = 0;
+            _prevAlignmentScore  = 0;
+            _alignmentRunLength  = 0;
         }
 
         protected override void OnBar()
@@ -222,6 +246,96 @@ namespace cAlgo.Robots
 
             // --- Cost context ------------------------------------------------
             f["spread_pips"] = Symbol.Spread / Symbol.PipSize;
+
+            // --- MTF alignment (v4.6.0-derived, v0.3) -----------------------
+            // Concept: multi-timeframe SMA alignment + faster-TF flip trigger.
+            // Ported from JCAMP_FxScalper v4.6.0 (which used M1/M3/M5/M10 +
+            // SMA 275). We use M5/M15/M30/H1 because (a) they're already loaded
+            // here, (b) M5 IS our decision bar so anything faster than M15 is
+            // noise at the decision horizon.
+            //
+            // IMPORTANT: we use the existing SMA200 on HTFs and SMA275 on M5.
+            // Period mismatch is small and the ML will handle it. To be strict,
+            // add _smaM15_275, _smaM30_275, _smaH1_275 in OnStart.
+
+            // Per-TF alignment: +1 if price > SMA on that TF, -1 if below.
+            // M5 uses SMA275 (same period as v4.6.0). HTFs use existing SMA200.
+            int m5Align  = (px > _smaM5_275.Result[closedBarIdx]) ? 1 : -1;
+            int m15Align = (px > _smaM15_200.Result.Last(1))      ? 1 : -1;
+            int m30Align = (px > _smaM30_200.Result.Last(1))      ? 1 : -1;
+            int h1Align  = (px > _smaH1_200.Result.Last(1))       ? 1 : -1;
+
+            // Feature 1: mtf_alignment_score (-4 to +4)
+            int alignScore = m5Align + m15Align + m30Align + h1Align;
+            f["mtf_alignment_score"] = alignScore;
+
+            // Feature 2: mtf_stacking_score (-3 to +3)
+            // v4.6.0's CheckSMAStacking: in an uptrend, faster SMAs sit above
+            // slower SMAs. We count pairwise orderings in the bullish direction
+            // and subtract those in bearish direction. Range -3 to +3.
+            double sma_m5  = _smaM5_275.Result[closedBarIdx];
+            double sma_m15 = _smaM15_200.Result.Last(1);
+            double sma_m30 = _smaM30_200.Result.Last(1);
+            double sma_h1  = _smaH1_200.Result.Last(1);
+            int stackScore = 0;
+            stackScore += (sma_m5  > sma_m15) ? 1 : -1;
+            stackScore += (sma_m15 > sma_m30) ? 1 : -1;
+            stackScore += (sma_m30 > sma_h1)  ? 1 : -1;
+            f["mtf_stacking_score"] = stackScore;
+
+            // Feature 3 + 4: M15 flip detection (v4.6.0's TF0 crossover concept)
+            // Detect when M15 price-vs-SMA alignment changes between bars.
+            // NOTE: we use Last(1) for M15 to match how the rest of the HTF
+            // features read — the last CLOSED M15 bar at this M5 bar close.
+            string currM15AlignStr = m15Align > 0 ? "BUY" : "SELL";
+            if (_prevM15Alignment != "" && _prevM15Alignment != currM15AlignStr)
+            {
+                _lastFlipBarIdx    = closedBarIdx;
+                _lastFlipDirection = (currM15AlignStr == "BUY") ? 1 : -1;
+            }
+            _prevM15Alignment = currM15AlignStr;
+
+            // bars_since: cap at 200 to keep scale bounded. If no flip yet in
+            // this run, emit 200 (treated as "stale / unknown").
+            int barsSinceFlip = (_lastFlipBarIdx < 0)
+                ? 200
+                : Math.Min(200, closedBarIdx - _lastFlipBarIdx);
+            f["bars_since_tf_fast_flip"] = barsSinceFlip;
+
+            // Direction: 0 if the flip is stale (>200 bars) or never happened.
+            // Otherwise +1 (flipped to BUY) or -1 (flipped to SELL).
+            int flipDir = (barsSinceFlip >= 200) ? 0 : _lastFlipDirection;
+            f["tf_fast_flip_direction"] = flipDir;
+
+            // Feature 5: mtf_alignment_duration (signed run length)
+            // How long has the current alignment regime persisted?
+            // Positive = bull-aligned run (score >= +3 sustained)
+            // Negative = bear-aligned run (score <= -3 sustained)
+            // Zero = no strong alignment on this bar.
+            if (alignScore >= 3)
+            {
+                // Bull-aligned this bar. Extend or start a bull run.
+                _alignmentRunLength = (_prevAlignmentScore >= 3)
+                    ? _alignmentRunLength + 1
+                    : 1;
+            }
+            else if (alignScore <= -3)
+            {
+                // Bear-aligned this bar.
+                _alignmentRunLength = (_prevAlignmentScore <= -3)
+                    ? _alignmentRunLength - 1
+                    : -1;
+            }
+            else
+            {
+                // Mixed — no sustained alignment.
+                _alignmentRunLength = 0;
+            }
+            _prevAlignmentScore = alignScore;
+
+            // Cap at ±200 to keep distribution bounded for the ML.
+            int boundedDuration = Math.Max(-200, Math.Min(200, _alignmentRunLength));
+            f["mtf_alignment_duration"] = boundedDuration;
 
             return f;
         }
