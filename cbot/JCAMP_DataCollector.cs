@@ -18,6 +18,14 @@
 //       with SMA 275 on M5 and SMA 200 on HTFs (existing indicators).
 //     - STATE: Added _prevM15Alignment, _lastFlipBarIdx, _lastFlipDirection
 //       for cross-bar tracking. Reset on OnStart.
+//   v0.4 (2026-04-16)
+//     - FEATURE: Added 2 regime-quality features based on fold diagnosis.
+//       atr_percentile_2000bar (rolling ATR percentile for volatility context),
+//       h1_alignment_agreement (interaction: MTF direction vs H1 macro slope).
+//     - STATE: Added _atrHistory ring buffer for rolling percentile calc.
+//     - RATIONALE: Fold diagnosis showed SHORT fails when MTF alignment
+//       disagrees with H1 slope. LONG fails partly due to vol regime blindness.
+//       See PHASE2_FOLD_DIAGNOSIS.md for full analysis.
 //   v0.2 (2026-04-12)
 //     - FIX: Off-by-one bar indexing. OnBar() fires when a NEW bar opens, so
 //            the just-closed bar is at Count-2, not Count-1. Previously bar0
@@ -94,6 +102,11 @@ namespace cAlgo.Robots
         // Track MTF alignment state persistence across bars
         private int _prevAlignmentScore  = 0;      // last bar's alignment score
         private int _alignmentRunLength  = 0;      // signed: + if bull-aligned run, - if bear-aligned run
+
+        // ----- Regime tracking (v0.4) -----------------------------------------
+        // Ring buffer for rolling ATR percentile (last 2000 M5 bars ≈ 7 trading days)
+        private const int ATR_HISTORY_SIZE = 2000;
+        private readonly Queue<double> _atrHistory = new Queue<double>();
 
         protected override void OnStart()
         {
@@ -336,6 +349,55 @@ namespace cAlgo.Robots
             // Cap at ±200 to keep distribution bounded for the ML.
             int boundedDuration = Math.Max(-200, Math.Min(200, _alignmentRunLength));
             f["mtf_alignment_duration"] = boundedDuration;
+
+            // --- Regime quality (v0.4) ------------------------------------------
+            // These features address the fold-diagnosis finding: model needs to
+            // know (a) whether current volatility is high/low RELATIVE to recent
+            // history, and (b) whether MTF direction agrees with H1 macro slope.
+
+            // Feature 1: atr_percentile_2000bar
+            // Rolling percentile: what fraction of the last 2000 ATR values are
+            // <= the current ATR? Range 0.0 (unusually calm) to 1.0 (unusually hot).
+            // During warmup (<2000 bars), uses whatever history is available.
+            _atrHistory.Enqueue(atr);
+            while (_atrHistory.Count > ATR_HISTORY_SIZE)
+                _atrHistory.Dequeue();
+
+            if (_atrHistory.Count >= 50)  // need some minimum history
+            {
+                int countBelow = 0;
+                foreach (var h in _atrHistory)
+                    if (h <= atr) countBelow++;
+                f["atr_percentile_2000bar"] = (double)countBelow / _atrHistory.Count;
+            }
+            else
+            {
+                f["atr_percentile_2000bar"] = 0.5;  // neutral default during warmup
+            }
+
+            // Feature 2: h1_alignment_agreement
+            // Does MTF alignment direction agree with H1 slope direction?
+            //   +1 = agreement (both bullish or both bearish)
+            //   -1 = disagreement (MTF says bull, H1 says bear, or vice versa)
+            //    0 = one or both are neutral (no strong signal either way)
+            //
+            // This directly addresses the SHORT fold-failure: SHORT model loses
+            // when MTF alignment is bearish but H1 macro slope is positive.
+            // The individual features exist but the model struggles to discover
+            // the interaction — exposing it explicitly helps.
+            double h1Slope = f["slope_sma_h1_200"];
+            int mtfSign = 0;
+            if (alignScore >= 2)  mtfSign = +1;   // clear bullish alignment
+            else if (alignScore <= -2) mtfSign = -1;  // clear bearish alignment
+
+            int h1Sign = 0;
+            if (h1Slope > 0.00005)  h1Sign = +1;    // H1 trending up
+            else if (h1Slope < -0.00005) h1Sign = -1; // H1 trending down
+
+            if (mtfSign == 0 || h1Sign == 0)
+                f["h1_alignment_agreement"] = 0;      // one side is neutral
+            else
+                f["h1_alignment_agreement"] = (mtfSign == h1Sign) ? 1 : -1;
 
             return f;
         }
