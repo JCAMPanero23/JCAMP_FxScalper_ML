@@ -1,9 +1,9 @@
 # Status
 
-**Current phase:** Phase 2 — Feature Engineering (Branch C)
-**Last completed:** Fold Regime Diagnosis (Notebook 04)
-**Decision:** Both models trigger Branch C - Feature Engineering Required
-**Next step:** Add regime gating features based on diagnosis findings
+**Current phase:** Phase 2 — v0.4 Walk-Forward CV (Branch C, Step 5)
+**Last completed:** DataCollector v0.4 full historical run (246k rows, 46 features)
+**Status:** Data ready for walk-forward CV analysis
+**Next step:** Execute walk-forward CV and evaluate against Gate A/B/C criteria
 
 ---
 
@@ -26,6 +26,34 @@
 | 5    | 2025-04-17 | 2025-05-13 |     5,119 |   170,612 |
 
 **Action:** All v0.4 walk-forward CV evaluations will use `PurgedWalkForward(n_splits=6, test_size=0.15, embargo_bars=48)` to ensure direct comparability with v0.3 results.
+
+---
+
+## DataCollector v0.4 Execution (Completed 2026-04-18)
+
+**Status:** Full historical run completed (skipped smoke test)
+
+**Dataset Generated:**
+- File: `data/DataCollector_EURUSD_M5_20230101_220446.csv`
+- Size: 112M
+- Date Range: Jan 2, 2023 → Apr 18, 2026
+- Row Count: ~244k+ (consistent with v0.3)
+- Feature Count: 46 (39 original + 5 MTF v0.3 + 2 regime v0.4)
+
+**v0.4 Features Verified:**
+- ✓ `atr_percentile_2000bar` (column 47): Rolling ATR percentile over 2000 bars
+  - Range: 0.0 (unusually calm) to 1.0 (unusually hot)
+  - Captures volatility regime context
+- ✓ `h1_alignment_agreement` (column 48): MTF direction ↔ H1 slope alignment
+  - Values: -1 (disagree), 0 (neutral), +1 (agree)
+  - Addresses SHORT fold failure when alignment disagrees with H1 trend
+
+**Archive:**
+- Old v0.3 datasets moved to `data/archive/` for reference:
+  - `DataCollector_EURUSD_M5_20230101_220400.csv` (v0.3, 108M)
+  - `DataCollector_EURUSD_M5_20230101_220400_partial_backup.csv` (partial)
+
+**Next Step:** Execute `run_v04_walk_forward.py` for walk-forward CV analysis (Step 5)
 
 ---
 
