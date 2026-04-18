@@ -7,6 +7,28 @@
 
 ---
 
+## CV Parameter Alignment (Resolved 2026-04-18)
+
+**Issue:** Fold verification (Notebook 05) used `n_splits=5` and produced only 4 folds. v0.3 experiment (PHASE2_MTF_EXPERIMENT.md) produced 5 folds. Parameters didn't match, which would have broken v0.4 comparability.
+
+**Root Cause:** The v0.3 experiment actually used `n_splits=6`, not `n_splits=5`. With `n_splits=6` and `test_size=0.15`, the 6th fold extends beyond the train/CV window, so only 5 usable folds are produced.
+
+**Resolution:** Confirmed that `n_splits=6, test_size=0.15, embargo_bars=48` produces exactly **5 folds**.
+
+**Canonical Fold Boundaries (for all future comparisons):**
+
+| Fold | Test Start | Test End   | Test Rows | Train Rows |
+|------|------------|------------|-----------|-----------|
+| 1    | 2023-06-15 | 2023-07-11 |     5,119 |    34,084 |
+| 2    | 2023-11-29 | 2023-12-27 |     5,119 |    68,216 |
+| 3    | 2024-05-16 | 2024-06-11 |     5,119 |   102,348 |
+| 4    | 2024-10-30 | 2024-11-25 |     5,119 |   136,480 |
+| 5    | 2025-04-17 | 2025-05-13 |     5,119 |   170,612 |
+
+**Action:** All v0.4 walk-forward CV evaluations will use `PurgedWalkForward(n_splits=6, test_size=0.15, embargo_bars=48)` to ensure direct comparability with v0.3 results.
+
+---
+
 ## Phase 2 MTF Experiment Results (v0.3 - Apr 15, 2026)
 
 **Dataset:** 244,482 rows with 44 features (39 original + 5 MTF from v4.6.0)
