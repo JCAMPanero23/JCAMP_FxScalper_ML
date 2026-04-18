@@ -89,7 +89,50 @@ Actual trading expectancy calculation requires triple-barrier outcomes, which is
 - `run_v04_walk_forward.py` — Walk-forward CV script
 - `generate_v04_report.py` — Report generation script
 
-**Next Step:** Calculate actual trading expectancy (R) and evaluate against Gate A/B/C criteria (Step 6)
+---
+
+## Phase 2 v0.4 Gate Decision (Completed 2026-04-18)
+
+**Status:** Step 6 complete - Trading expectancy calculated, Gate evaluation complete
+
+### Gate A Evaluation Results
+
+**LONG Model at Threshold 0.65:**
+- Mean expectancy: **+0.269R** (vs v0.3: +0.071R, **+279% improvement**)
+- Positive folds: **4/5 (80%)**
+- Worst fold: **-0.060R** (vs v0.3: -0.095R)
+- Avg trades/fold: **228**
+- **Gate A Status: ✓ PASS** — All criteria met
+
+**SHORT Model at Threshold 0.60 (best):**
+- Mean expectancy: **+0.170R** (vs v0.3: +0.071R, **+139% improvement**)
+- Positive folds: **3/5 (60%)**
+- Worst fold: **-0.271R** (vs v0.3: -0.268R)
+- Avg trades/fold: **267**
+- **Gate A Status: ✗ FAIL** — Worst fold exceeds -0.15R threshold
+
+### Hybrid Gate A Result
+
+| Direction | Decision | Action |
+|-----------|----------|--------|
+| **LONG** | ✓ **PASS** | Proceed to holdout validation |
+| **SHORT** | ✗ **FAIL** | Requires meta-gating or improvement |
+
+### Key Insights
+
+1. **v0.4 Regime Features Successful:** Both new features contributed meaningfully
+   - `atr_percentile_2000bar`: Volatility regime context improved LONG stability
+   - `h1_alignment_agreement`: MTF-macro alignment interaction detected
+
+2. **Fold 4 Remains Problematic:** October 2024 regime continues to challenge LONG
+   - Likely macro/sentiment-driven (not volatility or alignment)
+   - Suggests need for Phase 3 meta-gating or regime classification
+
+3. **Threshold Selection Key:** LONG best at 0.65, SHORT best at 0.55-0.60
+   - Higher thresholds = fewer trades but higher quality for LONG
+   - Trade-off: 484 trades/fold (0.55) vs 228 trades/fold (0.65), but expectancy +0.134R → +0.269R
+
+**Next Step:** Holdout test on Oct 2025 - Mar 2026 (Step 6 final) to validate LONG model
 
 ---
 
