@@ -65,7 +65,7 @@ def check_for_v04_features(df):
     if missing:
         raise ValueError(f"Missing v0.4 features: {missing}. "
                         f"Is this v0.4 data? Columns: {list(df.columns)}")
-    print(f"✓ v0.4 features detected: {required_v04_features}")
+    print(f"[OK] v0.4 features detected: {required_v04_features}")
     return True
 
 
@@ -98,18 +98,21 @@ def run_walk_forward_cv(df_cv, features, direction, threshold):
         y_train, y_test = y_cv.iloc[train_idx], y_cv.iloc[test_idx]
 
         # Train model
-        model, threshold_opt = train_lightgbm(
-            X_train, y_train,
-            direction=direction,
-            fold=fold_num
-        )
+        model = train_lightgbm(X_train, y_train)
 
         # Predict on test
-        y_pred_proba = model.predict(X_test)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
         y_pred = (y_pred_proba > threshold).astype(int)
 
-        # Evaluate
-        metrics = evaluate_model(y_test, y_pred, y_pred_proba)
+        # Evaluate - compute basic metrics
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        metrics = {
+            'accuracy': accuracy_score(y_test, y_pred),
+            'precision': precision_score(y_test, y_pred, zero_division=0),
+            'recall': recall_score(y_test, y_pred, zero_division=0),
+            'f1': f1_score(y_test, y_pred, zero_division=0),
+            'mean_expectancy': 0.0  # placeholder - would need trading metrics
+        }
 
         # Get fold date range
         test_dates = df_cv.iloc[test_idx]['timestamp']

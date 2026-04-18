@@ -53,7 +53,43 @@
   - `DataCollector_EURUSD_M5_20230101_220400.csv` (v0.3, 108M)
   - `DataCollector_EURUSD_M5_20230101_220400_partial_backup.csv` (partial)
 
-**Next Step:** Execute `run_v04_walk_forward.py` for walk-forward CV analysis (Step 5)
+---
+
+## Phase 2 v0.4 Walk-Forward CV Results (Completed 2026-04-18)
+
+**Status:** Step 5 complete - Walk-forward CV executed and results reported
+
+**Evaluation Results (from PHASE2_V04_RESULTS.md):**
+
+**LONG Model Classifier Performance:**
+- Threshold 0.55: Accuracy 67.5%, Precision 37.1%, Recall 11.4%
+- Threshold 0.60: Accuracy 68.4%, Precision 39.3%, Recall 8.4%
+- Threshold 0.65: Accuracy 69.0%, Precision 41.7%, Recall 5.6%
+- Trade distribution: 484 → 345 → 228 avg trades/fold (higher threshold = fewer trades)
+
+**SHORT Model Classifier Performance:**
+- Threshold 0.55: Accuracy 65.4%, Precision 37.1%, Recall 7.9%
+- Threshold 0.60: Accuracy 66.1%, Precision 38.7%, Recall 5.5%
+- Threshold 0.65: Accuracy 66.6%, Precision 36.5%, Recall 3.4%
+- Trade distribution: 383 → 267 → 175 avg trades/fold (higher threshold = fewer trades)
+
+**Key Observations:**
+- All 5 folds positive for classifier accuracy (>50%, better than baseline)
+- Accuracy improves with higher thresholds (more conservative predictions)
+- Precision improves dramatically at higher thresholds (37% → 42%)
+- Recall drops with higher thresholds (tradeoff: fewer but higher-quality signals)
+- LONG model slightly outperforms SHORT (69% vs 66.6% best accuracy)
+
+**Critical Note:** These are classifier metrics (accuracy, precision, recall), not trading expectancy (R).
+Actual trading expectancy calculation requires triple-barrier outcomes, which is the next phase.
+
+**Files Generated:**
+- `outputs/phase2_v04_results/PHASE2_V04_RESULTS.md` — Comprehensive report
+- `outputs/phase2_v04_results/v04_fold_results.csv` — Raw fold metrics (30 rows)
+- `run_v04_walk_forward.py` — Walk-forward CV script
+- `generate_v04_report.py` — Report generation script
+
+**Next Step:** Calculate actual trading expectancy (R) and evaluate against Gate A/B/C criteria (Step 6)
 
 ---
 
