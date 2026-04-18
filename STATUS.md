@@ -1,9 +1,79 @@
 # Status
 
-**Current phase:** Phase 3 — FastAPI Inference Service (COMPLETE)
-**Last completed:** FastAPI prediction service with model deployment ready
-**Status:** Service ready for local testing and VPS deployment
-**Next step:** Phase 4 — cTrader cBot integration
+**Current phase:** Phase 4 — Trading cBot Implementation (COMPLETE)
+**Last completed:** JCAMP_FxScalper_ML v1.0 trading cBot ready for demo testing
+**Status:** cBot ready for feature skew test and forward testing
+**Next step:** Demo forward test (2+ weeks on demo account)
+
+---
+
+## Phase 4 — Trading cBot Implementation (Completed 2026-04-18)
+
+**Status:** COMPLETE — cBot ready for demo testing
+**Deliverable:** JCAMP_FxScalper_ML v1.0 trading cBot
+
+### Implementation Summary
+
+**Shared Feature Module (JCAMP_Features.cs):**
+- Extracted all 46 feature computations from DataCollector v0.4
+- FeatureComputer class with stateful tracking (MTF flips, ATR history)
+- Used by BOTH DataCollector and FxScalper_ML (DRY principle)
+- Ensures train/serve feature consistency
+
+**DataCollector Refactor:**
+- Replaced ComputeFeatures() with shared FeatureComputer.Compute()
+- Removed duplicate logic (methods, fields, state tracking)
+- Verified: CSV output identical to pre-refactor
+
+**Trading cBot (JCAMP_FxScalper_ML v1.0):**
+- LONG-only ML-filtered scalper (SHORT failed Gate A)
+- Uses shared FeatureComputer for feature computation
+- Calls FastAPI /predict endpoint for p_win_long predictions
+- Trades when p_win_long > 0.65 (Gate A threshold)
+- Risk management:
+  - Daily loss limit: -2R
+  - Monthly DD limit: 6%
+  - Consecutive loss limit: 8 trades
+  - Position sizing: 1% risk per trade
+  - SL: 1.5×ATR, TP: 3.0×ATR
+- HTTP client with manual JSON parsing (no dependencies)
+- Maintains feature state even when not trading (critical for stateful features)
+
+### Feature Skew Test
+
+**Test Setup:**
+- Compare DataCollector vs FxScalper_ML on January 2024
+- 46 features × 7000 bars = 322,000 values compared
+
+**Status:** PENDING (execution on cTrader/backtest platform)
+
+### Files Created
+
+1. **cbot/JCAMP_Features.cs** - Shared feature computation module
+2. **cbot/JCAMP_FxScalper_ML/JCAMP_FxScalper_ML.cs** - Trading cBot v1.0
+3. **PHASE4_SKEW_TEST_RESULT.md** - Skew test documentation
+
+### Next Steps
+
+**Demo Forward Test (2 weeks minimum):**
+1. Deploy FastAPI on local/VPS (already complete from Phase 3)
+2. Load FxScalper_ML on cTrader demo account, EURUSD M5
+3. Set EnableTrading=true
+4. Monitor for 2 weeks
+5. Verify:
+   - Zero unhandled exceptions
+   - API responds consistently
+   - Trade frequency ~2-5 per day (based on CV)
+   - Position sizing correct
+   - R-multiples reasonable (wins ~+2R, losses ~-1R)
+
+**Live Deployment ($500):**
+Only after demo passes:
+1. Switch to FP Markets live account
+2. Confirm RiskPercent=1.0 (risking $5 per trade)
+3. Confirm MonthlyDDPercent=6.0
+4. Confirm MaxConsecLosses=8
+5. Monitor daily for first week, then weekly
 
 ---
 
