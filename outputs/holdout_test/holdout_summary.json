@@ -1,0 +1,22 @@
+{
+  "test_date": "2026-04-18T14:16:53.616965",
+  "test_period": "2025-10-01 to 2026-03-31",
+  "threshold": 0.65,
+  "n_trades": 422,
+  "n_wins": 245,
+  "n_losses": 174,
+  "n_timeouts": 3,
+  "win_rate": "58.1%",
+  "loss_rate": "41.2%",
+  "timeout_rate": "0.7%",
+  "expectancy": "+0.749R",
+  "net_r": "+316.0R",
+  "profit_factor": "2.82",
+  "max_consecutive_losses": 16,
+  "max_drawdown_r": "24.0R",
+  "cv_estimate": "+0.269R",
+  "pct_of_cv": "278%",
+  "within_30pct_tolerance": "False",
+  "verdict": "VERIFY",
+  "model_path": "models\\eurusd_long_v04_final_holdout.joblib"
+}
