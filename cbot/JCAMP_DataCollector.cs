@@ -1,5 +1,5 @@
 // =============================================================================
-// JCAMP_DataCollector v0.3
+// JCAMP_DataCollector v0.4
 // -----------------------------------------------------------------------------
 // Purpose: Pure observation cBot. Logs M5 features + triple-barrier outcomes
 //          to CSV for offline ML training (LightGBM in Python).
