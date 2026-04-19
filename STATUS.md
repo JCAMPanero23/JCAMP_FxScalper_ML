@@ -7,6 +7,25 @@
 
 ---
 
+## Holdout Data Status (Updated 2026-04-19 per Errata v2.1)
+
+**v04 Holdout (TP=3.0×ATR labels):** SPENT on 2026-04-18
+- Results: +0.749R, Profit Factor 2.82, 422 trades
+- Used once for Phase 4 validation
+
+**v05 Holdout (TP=4.5×ATR labels):** AVAILABLE
+- The barrier parameters changed from TP=3.0×ATR to TP=4.5×ATR
+- This makes the outcome variable fundamentally different
+- The v05 model answers a different question than v04
+- This constitutes a new experiment on the same calendar dates
+
+**RULE:** v05 holdout is single-use
+- Touch ONCE with simulate.py Step 2
+- Do not re-run after seeing results
+- This is the only untouched test set for v05 validation
+
+---
+
 ## Phase 4 — Trading cBot Implementation (Completed 2026-04-18)
 
 **Status:** COMPLETE — cBot ready for demo testing
