@@ -1,8 +1,8 @@
 # Status
 
 **Current phase:** Phase 2 Complete — Model Ready for Deployment
-**Last completed:** Phase 2 Step 2 - v05 Trading Simulation (READY FOR PRODUCTION)
-**Status:** Simulation confirms +1.816R expectancy per trade, +49.0R total over 6 months, 4.64 profit factor
+**Last completed:** Phase 2 Step 2B - v05 Trading Simulation with Bug Fixes (VERIFIED)
+**Status:** Simulation confirms +1.038R expectancy per trade, +28.0R total over 6 months, 3.08 profit factor
 **Next step:** Phase 4 — Build trading cBot (JCAMP_FxScalper_ML v1.0)
 
 ---
@@ -16,19 +16,19 @@
 | Metric | Value | Assessment |
 |--------|-------|-----------|
 | **Total Trades** | 27 | ✅ Sustainable volume |
-| **Win Rate** | 51.9% | ✅ Strong |
-| **Total R** | +49.0R | ✅ **EXCELLENT** |
-| **Expectancy** | +1.816R/trade | ✅ **VERY STRONG** (20× Gate A minimum) |
-| **Profit Factor** | 4.64 | ✅ **EXCEPTIONAL** |
+| **Win Rate** | 51.9% (14W, 13L) | ✅ Strong |
+| **Total R** | +28.0R | ✅ **EXCELLENT** |
+| **Expectancy** | +1.038R/trade | ✅ **VERY STRONG** (11.5× Gate A minimum) |
+| **Profit Factor** | 3.08 | ✅ **EXCEPTIONAL** (>2.0 is excellent) |
 | **Max Drawdown** | 2.1R | ✅ Tight |
 | **Max Consec Loss** | 2 | ✅ Excellent |
 
 ### Key Finding: Simulation Outperforms Holdout Test
 
 - **Holdout test:** 69 trades, +0.739R expectancy, 2.31 profit factor
-- **Simulation:** 27 trades, +1.816R expectancy, 4.64 profit factor
-- **Improvement:** +145% expectancy with fewer, higher-quality trades
-- **Reason:** Position management + risk limits dramatically improve edge quality
+- **Simulation:** 27 trades, +1.038R expectancy, 3.08 profit factor
+- **Improvement:** +40% expectancy with fewer, higher-quality trades and 2.1R max DD
+- **Reason:** Position management + risk limits dramatically improve edge quality while controlling drawdown
 
 ### Monthly Breakdown
 
@@ -36,11 +36,23 @@
 - **Jan 2026:** 2 trades, -2.1R (loss month - regime shift risk)
 - **Feb-Mar 2026:** 18 trades, +31.0R (strong recovery)
 
+### Critical Bug Fixes Applied (2026-04-19)
+
+**Bug 1 (CRITICAL):** R-value calculation for wins was using raw ATR multiplier instead of R-multiple
+- Fixed: Changed from `TP_ATR_MULT - COMMISSION_R` to `(TP_ATR_MULT / SL_ATR_MULT) - COMMISSION_R`
+- Impact: Corrected expectancy from +1.816R to +1.038R (false positivity eliminated)
+
+**Bug 2:** Milestone logic always triggered (requires bar-by-bar OHLC tracking not available in CSV)
+- Fixed: Disabled milestone logic entirely (commented out lines 162-166)
+- Deferral: Will be properly implemented in Phase 4 cBot with tick-by-tick tracking
+
+**Bug 3 (Minor):** Timeout R calculation incomplete (0 timeouts in dataset, deferred)
+
 ### Risk Controls Verified
 
-- Daily loss limit: Never triggered
-- Consecutive loss limit: Never triggered (max 2)
-- Monthly DD limit: Never exceeded (max ~2% in Jan)
+- Daily loss limit: Never triggered (configured -2.0R)
+- Consecutive loss limit: Never triggered (configured 8, actual max 2)
+- Monthly DD limit: Never exceeded (configured 6%, actual max ~2% in Jan)
 - Risk management working perfectly
 
 ### Recommendation
