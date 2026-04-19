@@ -7,11 +7,11 @@ from pathlib import Path
 
 # --- Paths ---
 MODEL_DIR = Path(__file__).parent / "models"
-LONG_MODEL_PATH = MODEL_DIR / "eurusd_long_v04_final_holdout.joblib"
+LONG_MODEL_PATH = MODEL_DIR / "eurusd_long_v05_holdout.joblib"
 DB_PATH = Path(__file__).parent / "prediction_log.db"
 
 # --- Model version ---
-MODEL_VERSION = "eurusd_long_v04_20260418"
+MODEL_VERSION = "eurusd_long_v05_20260420"
 
 # --- Feature list (EXACT order must match training) ---
 # These are the 46 features in the order the model expects them.
