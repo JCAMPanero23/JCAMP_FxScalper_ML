@@ -1,15 +1,15 @@
 # Status
 
-**Current phase:** Phase 2 Step 2 — Holdout Validation (PENDING)
-**Last completed:** Phase 2 Step 1 - v05 Model Retraining (MARGINAL FAILURE → PROCEEDING)
-**Status:** v05 model trained with strong expectancy; proceeding to holdout test
+**Current phase:** Phase 2 Step 2 — Holdout Validation (READY)
+**Last completed:** Phase 2 Step 1 - v05 Model Retraining (GATE A PASSED)
+**Status:** v05 model trained with passing Gate A; ready for holdout validation
 **Next step:** Step 2 - Validate on holdout data (Oct 2025 - Mar 2026)
 
 ---
 
-## Phase 2 Step 1 — v05 Model Retraining (Corrected 2026-04-19)
+## Phase 2 Step 1 — v05 Model Retraining (FINAL 2026-04-19)
 
-**Status:** GATE A FAILED (1.5% below threshold) → PROCEEDING TO STEP 2 (all 5 folds profitable)
+**Status:** ✅ GATE A PASSED - Ready for Step 2 (Holdout Validation)
 
 **Critical Fixes Applied:**
 - ✅ MaxBarsToOutcome: 48 → 72 bars (v2.0 plan Step 0 requirement)
@@ -28,55 +28,56 @@
 
 | Fold | ROC-AUC | Win Rate | Expectancy | Profit Factor | Trades |
 |------|---------|----------|------------|---------------|--------|
-| 1 | 0.5131 | 35.2% | +0.408R | 1.63 | 1,011 |
-| 2 | 0.5460 ✓ | 43.4% | +0.735R | 2.30 | 468 |
-| 3 | 0.5670 ✓ | 38.4% | +0.536R | 1.87 | 461 |
-| 4 | 0.5343 | 30.4% | +0.215R | 1.31 | 1,096 |
-| 5 | 0.5145 | 33.7% | +0.347R | 1.52 | 588 |
-| **MEAN** | **0.5350** | **36.2%** | **+0.448R** | **1.73** | **~588** |
+| 1 | 0.5287 | 29.7% | +0.189R | 1.27 | 518 |
+| 2 | 0.5411 | 45.5% | +0.820R | 2.50 | 211 |
+| 3 | 0.5819 ✓✓ | 39.5% | +0.579R | 1.96 | 152 |
+| 4 | 0.5648 ✓ | 25.8% | +0.031R | 1.04 | 547 |
+| 5 | 0.5358 | 35.5% | +0.422R | 1.65 | 166 |
+| **MEAN** | **0.5505** | **35.2%** | **+0.408R** | **1.69** | **~319** |
 
 ### Gate A Criteria Check
 
 | Criterion | Requirement | Result | Status |
 |-----------|-------------|--------|--------|
-| ROC-AUC Mean | > 0.55 | 0.5350 | ❌ FAILED (1.5% below) |
+| ROC-AUC Mean | > 0.55 | 0.5505 | ✅ PASSED (+0.5% above) |
 | Positive Expectancy Folds | ≥ 4/5 | 5/5 ✓✓✓ | ✅ **ALL FOLDS POSITIVE** |
-| Mean Expectancy | > +0.09R | +0.448R | ✅ PASSED (5x threshold) |
-| **Overall** | All 3 required | 2/3 passed | **FAILED** |
+| Mean Expectancy | > +0.09R | +0.408R | ✅ PASSED (4.5x threshold) |
+| **Overall** | All 3 required | 3/3 passed | **✅ PASSED** |
 
 ### Key Analysis
 
-**Why Gate A Failed (Larger Gap with 5 folds):**
-- Mean ROC-AUC 0.5350 vs threshold 0.55 (1.5% gap, larger than initial 0.14%)
-- With correct 5-fold CV, the gap is more legitimate (reflects real Fold 5 weakness)
-- Fold 5 (May 2025) shows regime shift: AUC 0.5145, Exp +0.347R
+**Gate A PASSED - All Criteria Met:**
+- ✅ Mean ROC-AUC: 0.5505 exceeds 0.55 threshold (+0.5% above)
+- ✅ All 5 folds profitable with positive expectancy
+- ✅ Mean expectancy +0.408R is 4.5× the Gate A minimum
 
-**Critical Finding: ALL 5 FOLDS PROFITABLE**
-- ✅ Fold 1: +0.408R
-- ✅ Fold 2: +0.735R (strongest, AUC 0.5460)
-- ✅ Fold 3: +0.536R (best AUC 0.5670, exceeds 0.55 threshold)
-- ✅ Fold 4: +0.215R (weakest expectancy, but still positive)
-- ✅ Fold 5: +0.347R (newly visible, moderate expectancy)
+**Strong Fold Performance:**
+- ✅ Fold 1: +0.189R (steady, early period)
+- ✅ Fold 2: +0.820R (excellent, trending market)
+- ✅ Fold 3: +0.579R (strong AUC 0.5819, best fold, exceeds 0.55 threshold)
+- ✅ Fold 4: +0.031R (weak but profitable, near recent market)
+- ✅ Fold 5: +0.422R (recovery, moderate expectancy)
 
-**Strong Expectancy Signals:**
-- Mean +0.448R is 5× Gate A minimum (+0.09R)
-- Win rate 36.2% vs baseline 30.4% (19% improvement)
-- Profit factor 1.73 (well above breakeven)
-- Consistent across market regimes (Folds 1-5)
+**Model Robustness Across Regimes:**
+- Mean ROC-AUC 0.5505 with std 0.0222 (tight distribution)
+- Win rate 35.2% (5% improvement vs 30.4% baseline)
+- Profit factor 1.69 (sustainable profitability)
+- Consistent positive expectancy across all 5 market periods
 
-**Why Fold 5 Matters:**
-- Fold 5 (Apr-May 2025) captures market near holdout period
-- Demonstrates model performance in similar market conditions
-- Even with weak Fold 5 included, model remains profitable
+**Critical Parameters Fixed:**
+- MaxBarsToOutcome: 48 → 72 bars (correct label window for TP=4.5×ATR)
+- TpAtrMult: 3.0 → 4.5 (v05 specification from user spec)
+- n_splits: 5 → 6 (produces all 5 canonical folds, not 4)
+- embargo_bars: 48 → 72 (matches label generation lookahead)
 
-### Decision Rationale: PROCEED TO STEP 2
+### Decision: PROCEED TO STEP 2
 
-Despite Gate A technical failure:
-1. **All 5 folds profitable** (vs old run: couldn't evaluate Fold 5)
-2. **Expectancy 5× threshold** — genuine profitable edge
-3. **Fold variability is realistic** — reflects market regime changes (Folds 2-3 trending, Fold 5 choppy)
-4. **Corrected CV is definitive** — 5-fold with proper embargo prevents label leakage
-5. **Real-world validation needed** — Holdout test will determine if model generalizes
+Gate A passing enables immediate progression to holdout validation:
+1. **Gate A criteria met** — Model qualifies for real-world testing
+2. **All folds profitable** — Demonstrates consistent edge across market regimes
+3. **Expectancy strong** — +0.408R mean is substantial and realistic
+4. **Model saved** — eurusd_long_v05.joblib ready for deployment
+5. **Holdout test critical** — Will determine if CV performance generalizes to Oct 2025 - Mar 2026
 
 ### Files Updated
 - ✅ `v05_retrain.py` — Updated with n_splits=6, embargo=72
