@@ -78,8 +78,8 @@ namespace cAlgo.Robots
         [Parameter("TP ATR Multiplier", DefaultValue = 4.5, MinValue = 0.5)]
         public double TpAtrMult { get; set; }
 
-        [Parameter("Max Bars To Outcome", DefaultValue = 48, MinValue = 5)]
-        public int MaxBarsToOutcome { get; set; }   // 48 M5 bars = 4 hours
+        [Parameter("Max Bars To Outcome", DefaultValue = 72, MinValue = 5)]
+        public int MaxBarsToOutcome { get; set; }   // 72 M5 bars = 6 hours
 
         [Parameter("Commission Per Lot Per Side USD", DefaultValue = 3.0)]
         public double CommissionPerLot { get; set; }

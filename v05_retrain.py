@@ -50,8 +50,8 @@ V05_PARAMS = {
 
 # CV Configuration
 CV_PARAMS = {
-    'n_splits': 5,              # Errata #6: verify actual fold count
-    'embargo_bars': 48,         # Max bars_to_outcome
+    'n_splits': 6,              # Produces canonical 5 folds (per v2.0 plan Step 0)
+    'embargo_bars': 72,         # Must match MaxBarsToOutcome for proper label generation
     'test_size': 0.15
 }
 
@@ -68,7 +68,7 @@ print("=" * 70)
 print(f"CSV: {CSV_PATH}")
 print(f"TP multiplier: {V05_PARAMS['tp_atr_mult']}×ATR (was 3.0)")
 print(f"Risk/reward: {V05_PARAMS['risk_reward']}R on win (was 2.0)")
-print(f"CV: {CV_PARAMS['n_splits']} folds")
+print(f"CV: {CV_PARAMS['n_splits']} splits (produces {CV_PARAMS['n_splits']-1} canonical folds)")
 print(f"Gate A: ROC-AUC > {GATE_A['min_roc_auc']}, expectancy > +{GATE_A['min_expectancy_r']}R")
 print()
 
