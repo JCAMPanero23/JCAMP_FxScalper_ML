@@ -13,7 +13,7 @@ def calculate_trading_metrics(
     y_true: np.ndarray,
     y_pred_proba: np.ndarray,
     threshold: float = 0.55,
-    risk_reward: float = 2.0,
+    risk_reward: float = 3.0,
     commission_r: float = 0.0
 ) -> Dict[str, float]:
     """
@@ -27,7 +27,7 @@ def calculate_trading_metrics(
         y_true: Actual outcomes (0=loss, 1=win)
         y_pred_proba: Predicted win probabilities (0-1)
         threshold: Minimum probability to take trade
-        risk_reward: Reward/risk ratio (TP/SL), e.g., 3.0/1.5 = 2.0
+        risk_reward: Reward/risk ratio (TP/SL), e.g., 4.5/1.5 = 3.0
         commission_r: Commission cost as fraction of R (e.g., 0.04 = 4% of 1R)
 
     Returns:
@@ -89,7 +89,7 @@ def simulate_equity_curve(
     y_true: np.ndarray,
     y_pred_proba: np.ndarray,
     threshold: float = 0.5,
-    risk_reward: float = 2.0,
+    risk_reward: float = 3.0,
     starting_capital_r: float = 100.0
 ) -> pd.DataFrame:
     """
@@ -213,7 +213,7 @@ def print_performance_summary(
 def plot_threshold_sensitivity(
     y_true: np.ndarray,
     y_pred_proba: np.ndarray,
-    risk_reward: float = 2.0,
+    risk_reward: float = 3.0,
     commission_r: float = 0.04,
     thresholds: np.ndarray = None,
     title: str = "Threshold Sensitivity",
