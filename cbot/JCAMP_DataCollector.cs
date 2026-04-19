@@ -1,5 +1,7 @@
 // =============================================================================
-// JCAMP_DataCollector v0.4
+// JCAMP_DataCollector v0.5
+// Refactored to use shared FeatureComputer (JCAMP_Features.cs)
+// Features: 46 (unchanged from v0.4)
 // -----------------------------------------------------------------------------
 // Purpose: Pure observation cBot. Logs M5 features + triple-barrier outcomes
 //          to CSV for offline ML training (LightGBM in Python).
@@ -11,13 +13,12 @@
 // TF     : M5 (set chart to M5 before running)
 //
 // CHANGELOG
-//   v0.3 (2026-04-14)
-//     - FEATURE: Added 5 MTF alignment features derived from v4.6.0 logic.
-//       mtf_alignment_score, mtf_stacking_score, bars_since_tf_fast_flip,
-//       tf_fast_flip_direction, mtf_alignment_duration. Uses M5/M15/M30/H1
-//       with SMA 275 on M5 and SMA 200 on HTFs (existing indicators).
-//     - STATE: Added _prevM15Alignment, _lastFlipBarIdx, _lastFlipDirection
-//       for cross-bar tracking. Reset on OnStart.
+//   v0.5 (2026-04-19)
+//     - REFACTOR: Extracted all 46 feature computations to shared FeatureComputer class.
+//       Removed ComputeFeatures(), SmaSlopeAt(), SmaSlopeHtf() methods (now in JCAMP_Features.cs).
+//       Removed duplicate stateful fields (_prevM15Alignment, _atrHistory, etc).
+//       Architecture: Single source of truth for features ensures train/serve consistency.
+//       CSV output identical to v0.4 (only internal structure changed).
 //   v0.4 (2026-04-16)
 //     - FEATURE: Added 2 regime-quality features based on fold diagnosis.
 //       atr_percentile_2000bar (rolling ATR percentile for volatility context),
@@ -26,6 +27,13 @@
 //     - RATIONALE: Fold diagnosis showed SHORT fails when MTF alignment
 //       disagrees with H1 slope. LONG fails partly due to vol regime blindness.
 //       See PHASE2_FOLD_DIAGNOSIS.md for full analysis.
+//   v0.3 (2026-04-14)
+//     - FEATURE: Added 5 MTF alignment features derived from v4.6.0 logic.
+//       mtf_alignment_score, mtf_stacking_score, bars_since_tf_fast_flip,
+//       tf_fast_flip_direction, mtf_alignment_duration. Uses M5/M15/M30/H1
+//       with SMA 275 on M5 and SMA 200 on HTFs (existing indicators).
+//     - STATE: Added _prevM15Alignment, _lastFlipBarIdx, _lastFlipDirection
+//       for cross-bar tracking. Reset on OnStart.
 //   v0.2 (2026-04-12)
 //     - FIX: Off-by-one bar indexing. OnBar() fires when a NEW bar opens, so
 //            the just-closed bar is at Count-2, not Count-1. Previously bar0
