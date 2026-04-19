@@ -48,8 +48,11 @@ namespace cAlgo.Robots
         [Parameter("SL ATR Multiplier", DefaultValue = 1.5)]
         public double SlAtrMult { get; set; }
 
-        [Parameter("TP ATR Multiplier", DefaultValue = 3.0)]
+        [Parameter("TP ATR Multiplier", DefaultValue = 4.5)]
         public double TpAtrMult { get; set; }
+
+        [Parameter("Timeout Bars", DefaultValue = 72, MinValue = 5)]
+        public int TimeoutBars { get; set; }
 
         [Parameter("Daily Loss Limit (R)", DefaultValue = -2.0)]
         public double DailyLossLimitR { get; set; }
@@ -151,6 +154,7 @@ namespace cAlgo.Robots
 
             // Init shared feature computer
             _features = new FeatureComputer();
+            _features.Reset();  // Initialize stateful fields (atrHistory, etc.)
 
             // Init HTTP client
             _httpClient = new HttpClient();
