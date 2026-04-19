@@ -75,7 +75,7 @@ namespace cAlgo.Robots
         [Parameter("SL ATR Multiplier", DefaultValue = 1.5, MinValue = 0.5)]
         public double SlAtrMult { get; set; }
 
-        [Parameter("TP ATR Multiplier", DefaultValue = 3.0, MinValue = 0.5)]
+        [Parameter("TP ATR Multiplier", DefaultValue = 4.5, MinValue = 0.5)]
         public double TpAtrMult { get; set; }
 
         [Parameter("Max Bars To Outcome", DefaultValue = 48, MinValue = 5)]
