@@ -13,6 +13,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using cAlgo.API;
@@ -78,6 +79,9 @@ namespace cAlgo.Robots
 
         private FeatureComputer _features;
         private HttpClient _httpClient;
+
+        // TEMPORARY: CSV debug output for feature skew test
+        private StreamWriter _csvDebug;
 
         // Indicators (same as DataCollector)
         private SimpleMovingAverage _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275;
@@ -156,6 +160,12 @@ namespace cAlgo.Robots
             _features = new FeatureComputer();
             _features.Reset();  // Initialize stateful fields (atrHistory, etc.)
 
+            // TEMPORARY: Log features to CSV for skew test
+            string debugPath = @"C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\FxScalper_features_debug.csv";
+            Directory.CreateDirectory(Path.GetDirectoryName(debugPath));
+            _csvDebug = new StreamWriter(debugPath);
+            _csvDebug.WriteLine(string.Join(",", FeatureComputer.FEATURE_NAMES));
+
             // Init HTTP client
             _httpClient = new HttpClient();
             _httpClient.Timeout = TimeSpan.FromMilliseconds(ApiTimeoutMs);
@@ -192,6 +202,16 @@ namespace cAlgo.Robots
                 _adxM5, _atrM5_14, _atrM15_14, _atrH1_14, _bbM5);
 
             if (feat == null) return;
+
+            // TEMPORARY: Log features for skew test
+            if (_csvDebug != null)
+            {
+                var values = new List<string>();
+                foreach (var name in FeatureComputer.FEATURE_NAMES)
+                    values.Add(feat[name].ToString("G17"));  // Full precision
+                _csvDebug.WriteLine(string.Join(",", values));
+                _csvDebug.Flush();
+            }
 
             // Check risk limits — pass features to management logic
             if (_dailyLimitHit || _monthlyLimitHit || _consecLimitHit)
@@ -405,6 +425,7 @@ namespace cAlgo.Robots
         protected override void OnStop()
         {
             _httpClient?.Dispose();
+            _csvDebug?.Close();
             Print("========================================");
             Print($"JCAMP FxScalper ML v{BOT_VERSION} STOPPED");
             Print("========================================");

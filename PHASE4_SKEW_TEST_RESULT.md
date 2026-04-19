@@ -50,13 +50,52 @@ var feat = _features.Compute(
 
 ## Results
 
-**Skew Test Status:** PENDING
+**Skew Test Status:** READY FOR EXECUTION (2026-04-19)
 
-To complete skew test:
+### Preparation Complete
+
+The following preparation work has been completed:
+
+1. ✅ **Temporary CSV Logging Added to FxScalper_ML**
+   - Field: `_csvDebug` (line ~81)
+   - Initialization in `OnStart()` (lines ~163-168)
+   - Logging in `OnBar()` (lines ~205-212)
+   - Cleanup in `OnStop()` (line ~427)
+   - Using namespace: `System.IO`
+
+2. ✅ **Python Comparison Script Created**
+   - File: `compare_feature_skew.py`
+   - Validates 46 features across all rows
+   - Reports max/mean/median differences
+   - Tolerance: 0.000001 (1e-6)
+
+3. ✅ **Execution Guide Created**
+   - File: `PHASE4_TASK4_EXECUTION_GUIDE.md`
+   - Step-by-step backtest procedures
+   - Parameter configurations
+   - Debugging guide if FAIL
+
+### Next Steps to Complete Test
+
 1. Run DataCollector backtest on Jan 1-31, 2024 (EURUSD M5)
-2. Run FxScalper_ML backtest on same period with temporary CSV logging
+   - Output location: `C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\DataCollector_EURUSD_M5_20240101_*.csv`
+
+2. Run FxScalper_ML backtest on same period (EURUSD M5, Jan 1-31, 2024)
+   - Enable Trading: **false** (critical: disable trading)
+   - Output location: `C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\FxScalper_features_debug.csv`
+
 3. Execute Python comparison script
-4. Document results below
+   ```bash
+   python compare_feature_skew.py \
+     "C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\DataCollector_EURUSD_M5_20240101_*.csv" \
+     "C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\FxScalper_features_debug.csv"
+   ```
+
+4. Document results below in this file
+
+5. Remove temporary logging code from FxScalper_ML (instructions in execution guide)
+
+6. Commit results to git
 
 **Expected Outcome:** Zero differences (max < 0.000001)
 
@@ -65,6 +104,7 @@ If differences detected, investigate:
 - Incorrect bar indexing (off-by-one errors)
 - Different HTF indicator read methods (Last(1) vs LastValue)
 - State reset timing issues
+- See `PHASE4_TASK4_EXECUTION_GUIDE.md` for debugging instructions
 
 ## Files Involved
 
