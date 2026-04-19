@@ -177,31 +177,10 @@ namespace cAlgo.Robots
             CheckDayReset();
             CheckMonthReset();
 
-            // Check risk limits
-            if (_dailyLimitHit || _monthlyLimitHit || _consecLimitHit)
-            {
-                // Still compute features (to keep state current) but don't trade
-                _features.Compute(Bars, closedBarIdx, Symbol,
-                    _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275,
-                    _smaM15_200, _smaM30_200, _smaH1_200, _smaH4_200,
-                    _rsiM5, _rsiM15, _rsiM30,
-                    _adxM5, _atrM5_14, _atrM15_14, _atrH1_14, _bbM5);
-                return;
-            }
-
-            // Skip if already in a position
-            if (Positions.FindAll(BOT_LABEL, SymbolName).Length >= MaxPositions)
-            {
-                // Still compute features to keep state current
-                _features.Compute(Bars, closedBarIdx, Symbol,
-                    _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275,
-                    _smaM15_200, _smaM30_200, _smaH1_200, _smaH4_200,
-                    _rsiM5, _rsiM15, _rsiM30,
-                    _adxM5, _atrM5_14, _atrM15_14, _atrH1_14, _bbM5);
-                return;
-            }
-
-            // 1) Compute features (shared module)
+            // CRITICAL FIX #1: Compute features ONCE unconditionally at the top
+            // Stateful trackers (atr_percentile, mtf_alignment_duration, bars_since_flip)
+            // must be updated on EVERY bar, including bars where position is open or
+            // risk limits are hit. Skipping bars creates gaps in rolling windows.
             var feat = _features.Compute(Bars, closedBarIdx, Symbol,
                 _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275,
                 _smaM15_200, _smaM30_200, _smaH1_200, _smaH4_200,
@@ -210,14 +189,28 @@ namespace cAlgo.Robots
 
             if (feat == null) return;
 
-            // 2) Call FastAPI for prediction
+            // Check risk limits — pass features to management logic
+            if (_dailyLimitHit || _monthlyLimitHit || _consecLimitHit)
+            {
+                return; // Features already computed; just don't trade
+            }
+
+            // Manage open position (if exists) — pass pre-computed features
+            var openPos = Positions.FindAll(BOT_LABEL, SymbolName);
+            if (openPos.Length >= MaxPositions)
+            {
+                ManageOpenTrade(openPos[0], feat, closedBarIdx);
+                return;
+            }
+
+            // Entry logic: call API with fresh features, execute trade if signal > threshold
             double pWinLong = CallPredictApi(feat);
             if (pWinLong < 0) return; // API error
 
-            // 3) Check threshold
+            // Check threshold
             if (pWinLong <= MLThreshold) return;
 
-            // 4) Calculate position size and levels
+            // Calculate position size and levels
             double atr = _atrM5_14.Result[closedBarIdx];
             double slPips = Math.Max(SlAtrMult * atr / Symbol.PipSize, 5.0);
             double tpPips = TpAtrMult * atr / Symbol.PipSize;
@@ -229,7 +222,7 @@ namespace cAlgo.Robots
             double volume = Symbol.NormalizeVolumeInUnits(
                 lots * Symbol.LotSize, RoundingMode.Down);
 
-            // 5) Execute trade
+            // Execute trade
             if (!EnableTrading) return;
 
             var result = ExecuteMarketOrder(
@@ -246,6 +239,18 @@ namespace cAlgo.Robots
             {
                 Print($"[ERROR] Order failed: {result.Error}");
             }
+        }
+
+        /// <summary>
+        /// Manage open position using already-computed features for this bar.
+        /// Called only when position is open. Features are FRESH (computed at OnBar top).
+        /// </summary>
+        private void ManageOpenTrade(Position pos, Dictionary<string, double> features, int closedBarIdx)
+        {
+            // Placeholder for future +2R re-score logic
+            // When profit >= +2R: re-score with current features to decide TP extension
+            // For v1.0: just hold position with original TP
+            // Future: extend TP to 6.0×ATR if p_win_long >= threshold at +2R milestone
         }
 
         #endregion
