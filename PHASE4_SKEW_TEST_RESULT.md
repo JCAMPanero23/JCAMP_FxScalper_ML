@@ -1,141 +1,76 @@
 # Phase 4 Feature Skew Test Results
 
-**Date:** 2026-04-18
-**Test Period:** January 2024 (EURUSD M5)
+**Date:** 2026-04-20
+**Test Period:** Jan 1-31, 2024 (EURUSD M5, 6,260 bars)
 **Purpose:** Verify FxScalper_ML computes identical features to DataCollector
+**Result:** ✅ **PASS** — max diff 5.0e-7 (within 1e-6 tolerance), 6260/6260 bars joined
 
-## Test Setup
+## Final Results
 
-- DataCollector v0.4 (refactored with shared FeatureComputer)
-- FxScalper_ML v1.0 (using same shared FeatureComputer)
-- Test period: Jan 1-31, 2024 (~7000 M5 bars)
-- Comparison: 46 features × 7000 rows = 322,000 values
+```
+================================================================================
+PHASE 4 FEATURE SKEW TEST (timestamp-joined)
+================================================================================
+CSV-A (DataCollector): DataCollector_EURUSD_M5_20240101_220000.csv
+CSV-B (FxScalper_ML):  FxScalper_features_debug_20240101-20-04-2026.csv
 
-## Implementation
+CSV-A rows: 6260
+CSV-B rows: 6260
+Joined rows (inner on timestamp): 6260
+Unmatched — CSV-A only: 0
+Unmatched — CSV-B only: 0
 
-**Shared Module Architecture:**
-- Extracted FeatureComputer class from DataCollector.cs
-- Both DataCollector and FxScalper_ML import and use identical class
-- Stateful tracking (_prevM15Alignment, _atrHistory, etc) maintained in FeatureComputer
-- Ensures feature computation is 100% consistent between training and trading
+DIFFERENCE STATISTICS (joined frame):
+  Max absolute difference: 4.999999999588667e-07
+  Mean difference:         1.775917150544882e-07
+  Median difference:       1.428571430000093e-07
+  Std deviation:           1.665870292018247e-07
+  Tolerance:               1.000000000000000e-06
 
-**Test Method:**
-1. Run DataCollector on January 2024 to generate CSV-A with features
-2. Add temporary CSV logging to FxScalper_ML
-3. Run FxScalper_ML on same period to generate CSV-B with features
-4. Compare row-by-row: should have zero differences (within floating point tolerance)
-
-## Key Code Sections
-
-**Feature Extraction:**
-```csharp
-// In FeatureComputer.Compute()
-// All 46 features computed identically in both cBots
-// Stateful fields maintained across bar iterations
-var feat = _features.Compute(
-    Bars, closedBarIdx, Symbol,
-    _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275,
-    _smaM15_200, _smaM30_200, _smaH1_200, _smaH4_200,
-    _rsiM5, _rsiM15, _rsiM30,
-    _adxM5, _atrM5_14, _atrM15_14, _atrH1_14, _bbM5);
+================================================================================
+PASS — Feature Skew Test Successful
+================================================================================
 ```
 
-**Stateful Fields Verified:**
-- `_prevM15Alignment`: M15 alignment state (BUY/SELL)
-- `_lastFlipBarIdx`: Bar index of last M15 alignment flip
-- `_lastFlipDirection`: Direction of last flip (+1/-1)
-- `_prevAlignmentScore`: Previous MTF alignment score
-- `_alignmentRunLength`: Signed count of sustained alignment
-- `_atrHistory`: Queue of 2000 historical ATR values for percentile
+Residual 5e-7 is pure rounding from DataCollector's `F6` format (6-decimal truncation). FxScalper writes full precision (`G17`). Shared `FeatureComputer` math is bit-identical.
 
-## Results
+## Investigation Summary
 
-**Skew Test Status:** READY FOR EXECUTION (2026-04-19)
+An earlier positional diff reported max 200 pips across 46/46 features with an "alternating row match + adjacent swap" pattern — documented in `FEATURE_SKEW_ANALYSIS.md`. Investigation traced this to a **diagnostic-side bug, not a feature-computation bug**:
 
-### Preparation Complete
+1. **`cbot/JCAMP_DataCollector.cs:240`** writes rows only after each bar's trade outcome resolves. Because bar N+1 can resolve before bar N (short-path outcomes hit first), CSV rows land **out of bar-chronological order**.
+2. **`cbot/JCAMP_FxScalper_ML/JCAMP_FxScalper_ML.cs`** writes rows immediately on `OnBar()`, so its CSV **is** in bar-chronological order.
+3. **`compare_feature_skew.py` (original)** diffed the two frames positionally with no timestamp join. Out-of-order rows on one side collided with in-order rows on the other, producing the alternating-swap signature.
+4. FxScalper's debug CSV had no timestamp column, so the diagnostic had no join key to recover with.
 
-The following preparation work has been completed:
+## Fix (landed in commit `de6c812`)
 
-1. ✅ **Temporary CSV Logging Added to FxScalper_ML**
-   - Field: `_csvDebug` (line ~81)
-   - Initialization in `OnStart()` (lines ~163-168)
-   - Logging in `OnBar()` (lines ~205-212)
-   - Cleanup in `OnStop()` (line ~427)
-   - Using namespace: `System.IO`
+1. **FxScalper_ML debug CSV gains `time_utc` column** (`Bars.OpenTimes[closedBarIdx]`). Header and row writes updated.
+2. **`compare_feature_skew.py` rewritten** to inner-join on timestamp. Reports unmatched rows from each side and the 5 worst-aligned bars on FAIL.
+3. **Debug logging removed post-PASS** (`StreamWriter` field, init block, OnBar write, OnStop close, `System.IO` using) from both worktree and cTrader source copies.
 
-2. ✅ **Python Comparison Script Created**
-   - File: `compare_feature_skew.py`
-   - Validates 46 features across all rows
-   - Reports max/mean/median differences
-   - Tolerance: 0.000001 (1e-6)
+## Verification
 
-3. ✅ **Execution Guide Created**
-   - File: `PHASE4_TASK4_EXECUTION_GUIDE.md`
-   - Step-by-step backtest procedures
-   - Parameter configurations
-   - Debugging guide if FAIL
-
-### Next Steps to Complete Test
-
-1. Run DataCollector backtest on Jan 1-31, 2024 (EURUSD M5)
-   - Output location: `C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\DataCollector_EURUSD_M5_20240101_*.csv`
-
-2. Run FxScalper_ML backtest on same period (EURUSD M5, Jan 1-31, 2024)
-   - Enable Trading: **false** (critical: disable trading)
-   - Output location: `C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\FxScalper_features_debug.csv`
-
-3. Execute Python comparison script
-   ```bash
-   python compare_feature_skew.py \
-     "C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\DataCollector_EURUSD_M5_20240101_*.csv" \
-     "C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\FxScalper_features_debug.csv"
-   ```
-
-4. Document results below in this file
-
-5. Remove temporary logging code from FxScalper_ML (instructions in execution guide)
-
-6. Commit results to git
-
-**Expected Outcome:** Zero differences (max < 0.000001)
-
-If differences detected, investigate:
-- Missing indicator initialization
-- Incorrect bar indexing (off-by-one errors)
-- Different HTF indicator read methods (Last(1) vs LastValue)
-- State reset timing issues
-- See `PHASE4_TASK4_EXECUTION_GUIDE.md` for debugging instructions
+Re-run on 2026-04-20: **PASS** with stats above. `FeatureComputer` and `DataCollector.cs` untouched — they were correct throughout.
 
 ## Files Involved
 
-- **Feature Module:** `cbot/JCAMP_Features.cs`
+- **Shared feature module:** `cbot/JCAMP_FxScalper_ML/JCAMP_Features.cs` (moved from `cbot/` into the cBot folder for cTrader project layout)
 - **DataCollector:** `cbot/JCAMP_DataCollector.cs`
 - **Trading cBot:** `cbot/JCAMP_FxScalper_ML/JCAMP_FxScalper_ML.cs`
-- **Config Reference:** `predict_service/config.py` (for feature name order)
+- **Diagnostics:** `compare_feature_skew.py`, `diagnose_feature_skew.py`
+- **Detailed investigation log:** `FEATURE_SKEW_ANALYSIS.md`
+
+## Precision Note
+
+DataCollector writes features as `F6` (6-decimal truncation); FxScalper writes `G17` (full precision). Residual ~5e-7 diff is half-ULP of `1e-6` — pure rounding. If tolerance is ever tightened below 5e-7, switch DataCollector to `G17` as well.
 
 ## Next Steps
 
-1. ✅ Create shared FeatureComputer module
-2. ✅ Refactor DataCollector to use shared module
-3. ✅ Create FxScalper_ML with shared module
-4. ⏳ Run skew test and document results
-5. ⏳ Remove temporary CSV logging code
-6. ⏳ Complete Phase 4 documentation
-
-## Notes
-
-**Train/Serve Consistency is Critical:**
-
-The ML model was trained on features computed by DataCollector v0.4. When FxScalper_ML uses features with ANY differences:
-- Model performance degrades (garbage in, garbage out)
-- Predictions become unreliable
-- Win rate drops, losses increase
-
-The shared FeatureComputer architecture **guarantees** identical computation because:
-1. Single source of truth (one file, two imports)
-2. Stateful features maintained consistently
-3. Indicator initialization identical
-4. Bar indexing identical
-5. HTF reads (Last(1)) identical
-
-This is the foundation of a production-grade trading system.
+1. ✅ Shared `FeatureComputer` module
+2. ✅ DataCollector refactored to use it
+3. ✅ FxScalper_ML using it
+4. ✅ Skew test PASS
+5. ✅ Debug logging removed
+6. ✅ Phase 4 documentation updated
+7. ⏭ **2-week FP Markets demo deployment** (per `PHASE4_DEPLOYMENT_READY.md`)

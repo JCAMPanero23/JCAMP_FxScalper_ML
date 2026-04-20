@@ -1,8 +1,18 @@
 # Phase 4 — READY FOR DEPLOYMENT ✅
 
-**Date:** 2026-04-19
-**Status:** ✅ **IMPLEMENTATION COMPLETE**
-**Next Step:** Feature Skew Test → Demo Deployment → Live Trading
+**Date:** 2026-04-20 (updated)
+**Status:** ✅ **SKEW TEST PASSED — CLEARED FOR DEMO**
+**Next Step:** Demo Deployment (2 weeks, FP Markets) → Live Trading
+
+## Skew Test Outcome (2026-04-20)
+
+Initial positional-diff test reported 200-pip max diff — traced to a diagnostic-side bug (DataCollector writes rows as outcomes resolve, not in bar order; FxScalper writes in bar order; no timestamp join key). Fix landed in commit `de6c812`:
+
+- `FxScalper_ML` debug CSV now emits a `time_utc` column.
+- `compare_feature_skew.py` inner-joins on timestamp.
+- Temporary debug logging stripped from `FxScalper_ML` post-PASS.
+
+**Re-run result:** max diff **5.0e-7** across 6260/6260 timestamp-joined bars (within 1e-6 tolerance, pure `F6` rounding noise from DataCollector). See [PHASE4_SKEW_TEST_RESULT.md](PHASE4_SKEW_TEST_RESULT.md) and [FEATURE_SKEW_ANALYSIS.md](FEATURE_SKEW_ANALYSIS.md) for full context.
 
 ---
 
@@ -67,21 +77,11 @@ cd ../..
 git merge --no-edit phase4/trading-cbot-implementation
 ```
 
-### 2. Run Feature Skew Test
+### 2. Feature Skew Test ✅ COMPLETE
 
-**Expected:** ✅ PASS (max difference = 0.000000)
+**Result:** PASS — max diff 5.0e-7, 6260/6260 bars joined, 2026-04-20.
 
-**Why?** Both DataCollector and FxScalper_ML use the same FeatureComputer class with identical indicator initialization. Feature skew is architecturally impossible.
-
-**Procedure:**
-1. Run DataCollector on Jan 2024 (EURUSD M5) → CSV-A
-2. Run FxScalper_ML on Jan 2024 (same dates) → CSV-B
-3. Compare: `python compare_feature_skew.py`
-4. Verify: max diff ≤ 0.000001
-5. Remove temporary logging from FxScalper_ML
-6. Commit result
-
-**Timeline:** ~30 minutes
+Key lesson learned: shared-code architecture guarantees train/serve math consistency, but **CSV row ordering and join key are separate concerns** — DataCollector writes out-of-order (outcome-resolution time), FxScalper writes in bar order. The diagnostic was updated to inner-join on timestamp rather than positional diff. See [PHASE4_SKEW_TEST_RESULT.md](PHASE4_SKEW_TEST_RESULT.md).
 
 ### 3. Demo Deployment (2 Weeks)
 
@@ -281,9 +281,9 @@ All critical user-specified requirements met:
 
 ---
 
-**Status:** ✅ **READY TO MERGE & DEPLOY**
+**Status:** ✅ **MERGED & READY TO DEMO** (main @ `cc42426`)
 
-**Next Action:** Run feature skew test (expected: PASS), then proceed to 2-week demo deployment on FP Markets.
+**Next Action:** 2-week FP Markets demo deployment.
 
-**Timeline to Live Trading:** 2-3 weeks (1 week skew test + 2 weeks demo)
+**Timeline to Live Trading:** ~2 weeks (skew test done; demo runs next).
 

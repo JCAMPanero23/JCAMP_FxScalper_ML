@@ -1,9 +1,47 @@
 # Status
 
-**Current phase:** Phase 2 Complete — Model Ready for Deployment
-**Last completed:** Phase 2 Step 2B - v05 Trading Simulation with Bug Fixes (VERIFIED)
-**Status:** Simulation confirms +1.038R expectancy per trade, +28.0R total over 6 months, 3.08 profit factor
-**Next step:** Phase 4 — Build trading cBot (JCAMP_FxScalper_ML v1.0)
+**Current phase:** Phase 4 Complete — Cleared for Demo Deployment
+**Last completed:** Phase 4 Feature Skew Test (PASS, 2026-04-20)
+**Status:** Skew test passes (max diff 5.0e-7, 6260/6260 bars joined). cBot + diagnostics merged to `main` (commit `cc42426`). Debug logging removed.
+**Next step:** 2-week FP Markets demo deployment per `PHASE4_DEPLOYMENT_READY.md`
+
+---
+
+## Phase 4 Skew Test PASSED (2026-04-20)
+
+**Status:** ✅ **DEMO-READY** — shared-FeatureComputer architecture validated end-to-end.
+
+### Result
+
+```
+Max absolute difference: 5.0e-7  (within 1e-6 tolerance)
+Joined rows: 6260/6260  (inner-join on timestamp)
+Unmatched: 0 on either side
+```
+
+Residual 5e-7 is pure rounding from DataCollector's `F6` format; FxScalper uses `G17`. `FeatureComputer` math is bit-identical.
+
+### Investigation
+
+An earlier positional-diff run reported 200-pip max diff with an "alternating row match + adjacent swap" pattern. Traced to a **diagnostic-side bug, not a feature-computation bug**:
+
+- `JCAMP_DataCollector.cs:240` writes rows as trade outcomes resolve — out of bar-chronological order (bar N+1 can resolve before bar N).
+- `JCAMP_FxScalper_ML.cs` writes rows in bar order on `OnBar()`.
+- Original `compare_feature_skew.py` diffed positionally with no join key — swapped rows looked like 200-pip feature diffs.
+
+### Fix (commit `de6c812`)
+
+- `FxScalper_ML` debug CSV gains `time_utc` column.
+- `compare_feature_skew.py` rewritten to inner-join on timestamp.
+- Temporary debug logging stripped from `FxScalper_ML` (field, init block, OnBar write, OnStop close, `System.IO` using) — both worktree and cTrader `Sources/Robots` copies.
+
+### Merge
+
+Merge commit `cc42426` on `main` brings 12 Phase 4 commits in (cBot v1.0, DataCollector v0.5 refactor, shared FeatureComputer, FastAPI v05 config, skew diagnostics, skew fix, debug removal).
+
+### Next
+
+Demo deployment on FP Markets per `PHASE4_DEPLOYMENT_READY.md`. Monitor win rate, expectancy, drawdown vs. the `+1.038R/trade, 52% win rate, 4-5 trades/mo` targets.
 
 ---
 
