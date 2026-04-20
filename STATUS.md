@@ -1,9 +1,46 @@
 # Status
 
-**Current phase:** Phase 4 Complete — Cleared for Demo Deployment
-**Last completed:** Phase 4 Feature Skew Test (PASS, 2026-04-20)
-**Status:** Skew test passes (max diff 5.0e-7, 6260/6260 bars joined). cBot + diagnostics merged to `main` (commit `cc42426`). Debug logging removed.
-**Next step:** 2-week FP Markets demo deployment per `PHASE4_DEPLOYMENT_READY.md`
+**Current phase:** Demo Deployment — LIVE (2026-04-21)
+**Last completed:** VPS deployment on Hetzner CX23, FastAPI service running and reachable
+**Status:** FastAPI prediction service live on `91.99.227.165:8000`. Model loaded (eurusd_long_v05_20260420, 46 features). Health check passing from laptop. cBot API URL updated to VPS endpoint.
+**Next step:** Monitor demo for 2 weeks — track win rate, expectancy, drawdown vs `+1.038R/trade, 52% win rate, 4-5 trades/mo` targets
+
+---
+
+## VPS Deployment — Live (2026-04-21)
+
+**Status:** ✅ LIVE — FastAPI service running on Hetzner CX23
+
+### Infrastructure
+- **VPS:** Hetzner CX23 (2 vCPU, 4GB RAM, 40GB SSD, Ubuntu 22.04)
+- **Location:** Nuremberg, Germany
+- **IP:** 91.99.227.165
+- **Service:** systemd `jcamp-predict.service` (auto-start, auto-restart on failure)
+- **Memory usage:** ~100MB (well within 4GB)
+
+### Deployment Files
+- `predict_service/jcamp-predict.service` — systemd unit file (replaces Windows `install_service.bat`)
+- `predict_service/deploy_linux.sh` — one-shot Ubuntu setup script
+- `predict_service/requirements.txt` — added `scikit-learn>=1.3.0` (required for model unpickling)
+
+### cTrader Configuration
+- `API URL`: `http://91.99.227.165:8000/predict`
+- `EnableTrading`: `true`
+- Symbol: EURUSD M5, FP Markets demo account
+
+### Firewall
+- Port 22 (SSH): open
+- Port 8000: restricted to `91.73.51.125` (laptop home IP)
+- All other inbound: denied
+
+### Note on Dynamic IP
+Home IP (`91.73.51.125`) may change occasionally. If cBot stops getting predictions, update firewall:
+```bash
+ufw delete allow from <OLD_IP> to any port 8000
+ufw allow from <NEW_IP> to any port 8000
+```
+
+---
 
 ---
 

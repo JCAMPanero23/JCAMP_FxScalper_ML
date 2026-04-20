@@ -1,0 +1,22 @@
+[Unit]
+Description=JCAMP FxScalper ML Prediction Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=jcamp
+WorkingDirectory=/opt/jcamp/predict_service
+ExecStart=/opt/jcamp/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jcamp-predict
+
+# Safety limits
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
