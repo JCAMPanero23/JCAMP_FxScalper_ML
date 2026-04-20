@@ -1,28 +1,17 @@
-#!/usr/bin/env python3
 """
-Feature Skew Test - Comparison Script
-======================================
-
-Purpose: Compare features computed by DataCollector vs FxScalper_ML.
-This script validates that both implementations produce identical features,
-which is critical for train/serve consistency.
-
-Usage:
-    python compare_feature_skew.py <datacollector_csv> <fxscalper_csv>
-
-Example:
-    python compare_feature_skew.py \
-        "C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\DataCollector_EURUSD_M5_20240101_*.csv" \
-        "C:\Users\Jcamp_Laptop\Documents\JCAMP_Data\FxScalper_features_debug.csv"
+Phase 4 Feature Skew Test
+========================
+Compare DataCollector vs FxScalper_ML feature computation
+Test: Jan 2024 EURUSD M5 (46 features, ~7000 bars)
+Tolerance: max difference ≤ 0.000001 (floating point precision)
 """
 
 import pandas as pd
 import numpy as np
-import sys
-import glob
+import os
 from pathlib import Path
 
-# Feature names (must match FeatureComputer.FEATURE_NAMES in C#)
+# Feature names (must match JCAMP_Features.cs exactly)
 FEATURE_NAMES = [
     "dist_sma_m5_50", "dist_sma_m5_100", "dist_sma_m5_200",
     "dist_sma_m5_275", "dist_sma_m15_200", "dist_sma_m30_200",
@@ -43,150 +32,120 @@ FEATURE_NAMES = [
     "atr_percentile_2000bar", "h1_alignment_agreement",
 ]
 
-def load_csv_with_glob(pattern: str) -> pd.DataFrame:
-    """Load CSV, supporting wildcard patterns."""
-    files = glob.glob(pattern)
-    if not files:
-        raise FileNotFoundError(f"No files matching pattern: {pattern}")
-    if len(files) > 1:
-        print(f"WARNING: Multiple files found, using first: {files[0]}")
-    return pd.read_csv(files[0])
+# File paths
+outputs_dir = Path("outputs")
+csv_a = outputs_dir / "DataCollector_EURUSD_M5_20240101_220030.csv"
+csv_b = outputs_dir / "FxScalper_features_debug_20240101-20-04-2026.csv"
 
-def main():
-    if len(sys.argv) != 3:
-        print("Usage: python compare_feature_skew.py <datacollector_csv> <fxscalper_csv>")
-        sys.exit(1)
+print("=" * 80)
+print("PHASE 4 FEATURE SKEW TEST")
+print("=" * 80)
+print()
 
-    collector_path = sys.argv[1]
-    fxscalper_path = sys.argv[2]
+# Verify files exist
+if not csv_a.exists():
+    print(f"ERROR: CSV-A not found: {csv_a}")
+    exit(1)
 
-    print("=" * 70)
-    print("FEATURE SKEW TEST - COMPARISON REPORT")
-    print("=" * 70)
+if not csv_b.exists():
+    print(f"ERROR: CSV-B not found: {csv_b}")
+    exit(1)
+
+print(f"CSV-A (DataCollector): {csv_a.name}")
+print(f"CSV-B (FxScalper_ML):  {csv_b.name}")
+print()
+
+# Load CSVs
+print("Loading CSV files...")
+collector = pd.read_csv(csv_a)
+fxscalper = pd.read_csv(csv_b)
+
+print(f"  CSV-A rows: {len(collector)}")
+print(f"  CSV-B rows: {len(fxscalper)}")
+print()
+
+# Check row count match
+if len(collector) != len(fxscalper):
+    print(f"WARNING: Row count mismatch (A={len(collector)}, B={len(fxscalper)})")
+    print(f"  Using minimum: {min(len(collector), len(fxscalper))}")
+    min_rows = min(len(collector), len(fxscalper))
+    collector = collector.iloc[:min_rows]
+    fxscalper = fxscalper.iloc[:min_rows]
     print()
 
-    # Load CSVs
-    print(f"Loading DataCollector CSV: {collector_path}")
-    try:
-        collector = load_csv_with_glob(collector_path)
-    except Exception as e:
-        print(f"ERROR: Failed to load DataCollector CSV: {e}")
-        sys.exit(1)
+# Verify all 46 features present
+print("Verifying 46 features...")
+missing_a = [f for f in FEATURE_NAMES if f not in collector.columns]
+missing_b = [f for f in FEATURE_NAMES if f not in fxscalper.columns]
 
-    print(f"  - Rows: {len(collector)}")
-    print(f"  - Columns: {len(collector.columns)}")
+if missing_a:
+    print(f"ERROR: Missing in CSV-A: {missing_a}")
+    exit(1)
+
+if missing_b:
+    print(f"ERROR: Missing in CSV-B: {missing_b}")
+    exit(1)
+
+print(f"  All 46 features present in both files")
+print()
+
+# Compare features
+print("Comparing features...")
+print(f"  Testing: {len(FEATURE_NAMES)} features x {len(collector)} bars = {len(FEATURE_NAMES) * len(collector)} values")
+print()
+
+# Calculate absolute differences
+diff = np.abs(collector[FEATURE_NAMES].values - fxscalper[FEATURE_NAMES].values)
+max_diff = np.max(diff)
+max_per_col = np.max(diff, axis=0)
+max_per_row = np.max(diff, axis=1)
+
+# Calculate statistics
+tolerance = 0.000001
+mean_diff = np.mean(diff)
+median_diff = np.median(diff)
+std_diff = np.std(diff)
+
+print(f"DIFFERENCE STATISTICS:")
+print(f"  Max absolute difference:    {max_diff:.15e}")
+print(f"  Mean difference:            {mean_diff:.15e}")
+print(f"  Median difference:          {median_diff:.15e}")
+print(f"  Std deviation:              {std_diff:.15e}")
+print(f"  Tolerance:                  {tolerance:.15e}")
+print()
+
+# Test result
+if max_diff <= tolerance:
+    print("=" * 80)
+    print("PASS - Feature Skew Test Successful")
+    print("=" * 80)
     print()
-
-    print(f"Loading FxScalper_ML CSV: {fxscalper_path}")
-    try:
-        fxscalper = pd.read_csv(fxscalper_path)
-    except Exception as e:
-        print(f"ERROR: Failed to load FxScalper CSV: {e}")
-        sys.exit(1)
-
-    print(f"  - Rows: {len(fxscalper)}")
-    print(f"  - Columns: {len(fxscalper.columns)}")
+    print(f"Conclusion: DataCollector and FxScalper_ML compute IDENTICAL features")
+    print(f"            within floating point precision (max diff <= {tolerance:.0e})")
     print()
-
-    # Extract feature columns
-    print("Extracting feature columns...")
-
-    # DataCollector has: timestamp, symbol, [features...], outcome_long, bars_to_outcome_long, ...
-    # FxScalper_ML has: [features only]
-
-    try:
-        collector_features = collector[FEATURE_NAMES]
-        print(f"  - DataCollector: {len(FEATURE_NAMES)} features extracted")
-    except KeyError as e:
-        print(f"ERROR: Missing column in DataCollector: {e}")
-        sys.exit(1)
-
-    try:
-        fxscalper_features = fxscalper[FEATURE_NAMES]
-        print(f"  - FxScalper_ML: {len(FEATURE_NAMES)} features extracted")
-    except KeyError as e:
-        print(f"ERROR: Missing column in FxScalper_ML: {e}")
-        sys.exit(1)
-
+    print("Interpretation:")
+    print("  * Both use shared FeatureComputer class")
+    print("  * Identical indicator initialization")
+    print("  * Identical bar indexing")
+    print("  * Train/serve consistency GUARANTEED")
     print()
-
-    # Align by row count
-    min_rows = min(len(collector_features), len(fxscalper_features))
-    print(f"Aligning CSVs: comparing first {min_rows} rows")
-
-    collector_subset = collector_features.iloc[:min_rows].values.astype(np.float64)
-    fxscalper_subset = fxscalper_features.iloc[:min_rows].values.astype(np.float64)
-
+    print("Next Step: Remove temporary CSV logging from FxScalper_ML and deploy")
+    exit(0)
+else:
+    print("=" * 80)
+    print("FAIL - Feature Skew Detected")
+    print("=" * 80)
     print()
-    print("=" * 70)
-    print("COMPARISON RESULTS")
-    print("=" * 70)
+    print(f"Max difference {max_diff:.15e} exceeds tolerance {tolerance:.15e}")
     print()
-
-    # Calculate differences
-    diff = np.abs(collector_subset - fxscalper_subset)
-    max_diff = np.max(diff)
-    mean_diff = np.mean(diff)
-    median_diff = np.median(diff)
-    max_per_col = np.max(diff, axis=0)
-
-    # Tolerance
-    TOLERANCE = 1e-6
-
-    # Report statistics
-    print(f"Total cells compared: {min_rows} rows × {len(FEATURE_NAMES)} features = {min_rows * len(FEATURE_NAMES):,}")
+    print("Features with differences > tolerance:")
+    for i, col in enumerate(FEATURE_NAMES):
+        if max_per_col[i] > tolerance:
+            print(f"  {col:30s}: max diff = {max_per_col[i]:.15e}")
     print()
-    print(f"Max absolute difference:     {max_diff:.15e}")
-    print(f"Mean absolute difference:    {mean_diff:.15e}")
-    print(f"Median absolute difference:  {median_diff:.15e}")
-    print(f"Tolerance (acceptance):      {TOLERANCE:.15e}")
-    print()
-
-    # Test result
-    if max_diff <= TOLERANCE:
-        print("=" * 70)
-        print("STATUS: ✅ PASS - Features are identical within tolerance!")
-        print("=" * 70)
-        print()
-        print("Interpretation:")
-        print("  - DataCollector and FxScalper_ML compute IDENTICAL features")
-        print("  - Train/serve consistency VERIFIED")
-        print("  - Shared FeatureComputer module is CORRECT")
-        print("  - Safe to proceed to demo deployment")
-        print()
-        return 0
-    else:
-        print("=" * 70)
-        print("STATUS: ❌ FAIL - Feature skew detected!")
-        print("=" * 70)
-        print()
-        print("Features with differences > tolerance:")
-        print()
-
-        skewed = []
-        for i, col_name in enumerate(FEATURE_NAMES):
-            if max_per_col[i] > TOLERANCE:
-                skewed.append((col_name, max_per_col[i]))
-
-        if skewed:
-            skewed.sort(key=lambda x: -x[1])  # Sort by magnitude (largest first)
-            for col_name, max_col_diff in skewed[:10]:  # Show top 10
-                print(f"  {col_name:30s}: max diff = {max_col_diff:.15e}")
-
-        print()
-        print("Diagnosis:")
-        print("  1. Check indicator initialization order (must be identical)")
-        print("  2. Verify warmup bar skipping is identical (both skip first 300 bars)")
-        print("  3. Check for timezone differences in time-based features")
-        print("  4. Verify DataCollector CSV has same bars as cBot processed")
-        print("  5. Check for floating point rounding differences")
-        print()
-        print("Next steps:")
-        print("  1. Review FeatureComputer.cs for computation differences")
-        print("  2. Add debug logging to isolate which feature diverges")
-        print("  3. Verify indicator parameters are identical")
-        print()
-        return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
+    print("Investigation needed:")
+    print("  1. Check indicator initialization (same parameters in both cBots?)")
+    print("  2. Check bar indexing (closedBarIdx calculation identical?)")
+    print("  3. Check stateful fields (MTF tracking, ATR history initialized same?)")
+    print("  4. Check data types (float precision issues?)")
+    exit(1)
