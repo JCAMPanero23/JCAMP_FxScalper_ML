@@ -144,6 +144,7 @@ namespace cAlgo.Robots
 
             // ---- Init shared feature computer --------------------------------
             _featureComputer = new FeatureComputer();
+            _featureComputer.Reset();
         }
 
         protected override void OnBar()
