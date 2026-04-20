@@ -1,17 +1,22 @@
 """
-Phase 4 Feature Skew Test
-========================
-Compare DataCollector vs FxScalper_ML feature computation
-Test: Jan 2024 EURUSD M5 (46 features, ~7000 bars)
-Tolerance: max difference ≤ 0.000001 (floating point precision)
+Phase 4 Feature Skew Test — timestamp-joined comparison.
+
+Compares DataCollector vs FxScalper_ML feature computation by inner-joining
+on bar timestamp. DataCollector writes rows as trade outcomes resolve (not in
+bar order); FxScalper writes rows in bar order on OnBar(). Positional diff
+produced spurious 200-pip mismatches — this version joins on time and only
+diffs co-located bars.
+
+Tolerance: max difference <= 1e-06 (floating point precision). Note that
+DataCollector formats features with "F6" (6-decimal truncation), so a clean
+PASS may require loosening to ~1e-4 if rounding noise dominates. We log the
+max diff either way so the real signal is visible.
 """
 
 import pandas as pd
 import numpy as np
-import os
 from pathlib import Path
 
-# Feature names (must match JCAMP_Features.cs exactly)
 FEATURE_NAMES = [
     "dist_sma_m5_50", "dist_sma_m5_100", "dist_sma_m5_200",
     "dist_sma_m5_275", "dist_sma_m15_200", "dist_sma_m30_200",
@@ -32,120 +37,115 @@ FEATURE_NAMES = [
     "atr_percentile_2000bar", "h1_alignment_agreement",
 ]
 
-# File paths
 outputs_dir = Path("outputs")
-csv_a = outputs_dir / "DataCollector_EURUSD_M5_20240101_220030.csv"
+csv_a = outputs_dir / "DataCollector_EURUSD_M5_20240101_220000.csv"
 csv_b = outputs_dir / "FxScalper_features_debug_20240101-20-04-2026.csv"
 
-print("=" * 80)
-print("PHASE 4 FEATURE SKEW TEST")
-print("=" * 80)
-print()
+TOLERANCE = 1e-6
 
-# Verify files exist
+print("=" * 80)
+print("PHASE 4 FEATURE SKEW TEST (timestamp-joined)")
+print("=" * 80)
+
 if not csv_a.exists():
     print(f"ERROR: CSV-A not found: {csv_a}")
-    exit(1)
-
+    raise SystemExit(1)
 if not csv_b.exists():
     print(f"ERROR: CSV-B not found: {csv_b}")
-    exit(1)
+    raise SystemExit(1)
 
 print(f"CSV-A (DataCollector): {csv_a.name}")
 print(f"CSV-B (FxScalper_ML):  {csv_b.name}")
 print()
 
-# Load CSVs
-print("Loading CSV files...")
 collector = pd.read_csv(csv_a)
 fxscalper = pd.read_csv(csv_b)
 
-print(f"  CSV-A rows: {len(collector)}")
-print(f"  CSV-B rows: {len(fxscalper)}")
-print()
+if "timestamp" not in collector.columns:
+    print("ERROR: CSV-A missing 'timestamp' column")
+    raise SystemExit(1)
+if "time_utc" not in fxscalper.columns:
+    print("ERROR: CSV-B missing 'time_utc' column (did you rebuild FxScalper_ML?)")
+    raise SystemExit(1)
 
-# Check row count match
-if len(collector) != len(fxscalper):
-    print(f"WARNING: Row count mismatch (A={len(collector)}, B={len(fxscalper)})")
-    print(f"  Using minimum: {min(len(collector), len(fxscalper))}")
-    min_rows = min(len(collector), len(fxscalper))
-    collector = collector.iloc[:min_rows]
-    fxscalper = fxscalper.iloc[:min_rows]
-    print()
+collector["_ts"] = pd.to_datetime(collector["timestamp"], format="%Y-%m-%d %H:%M:%S")
+fxscalper["_ts"] = pd.to_datetime(fxscalper["time_utc"], format="%Y-%m-%d %H:%M:%S")
 
-# Verify all 46 features present
-print("Verifying 46 features...")
+collector = collector.sort_values("_ts").reset_index(drop=True)
+fxscalper = fxscalper.sort_values("_ts").reset_index(drop=True)
+
 missing_a = [f for f in FEATURE_NAMES if f not in collector.columns]
 missing_b = [f for f in FEATURE_NAMES if f not in fxscalper.columns]
-
 if missing_a:
     print(f"ERROR: Missing in CSV-A: {missing_a}")
-    exit(1)
-
+    raise SystemExit(1)
 if missing_b:
     print(f"ERROR: Missing in CSV-B: {missing_b}")
-    exit(1)
+    raise SystemExit(1)
 
-print(f"  All 46 features present in both files")
+a_cols = ["_ts"] + FEATURE_NAMES
+b_cols = ["_ts"] + FEATURE_NAMES
+joined = collector[a_cols].merge(
+    fxscalper[b_cols], on="_ts", how="inner", suffixes=("_a", "_b")
+)
+
+only_a = len(collector) - len(joined)
+only_b = len(fxscalper) - len(joined)
+print(f"CSV-A rows: {len(collector)}")
+print(f"CSV-B rows: {len(fxscalper)}")
+print(f"Joined rows (inner on timestamp): {len(joined)}")
+print(f"Unmatched — CSV-A only: {only_a}")
+print(f"Unmatched — CSV-B only: {only_b}")
 print()
 
-# Compare features
-print("Comparing features...")
-print(f"  Testing: {len(FEATURE_NAMES)} features x {len(collector)} bars = {len(FEATURE_NAMES) * len(collector)} values")
+if len(joined) == 0:
+    print("ERROR: zero rows after timestamp join — date ranges don't overlap")
+    raise SystemExit(1)
+
+a_vals = joined[[f + "_a" for f in FEATURE_NAMES]].to_numpy(dtype=float)
+b_vals = joined[[f + "_b" for f in FEATURE_NAMES]].to_numpy(dtype=float)
+diff = np.abs(a_vals - b_vals)
+
+max_diff = float(np.max(diff))
+mean_diff = float(np.mean(diff))
+median_diff = float(np.median(diff))
+std_diff = float(np.std(diff))
+
+print("DIFFERENCE STATISTICS (joined frame):")
+print(f"  Max absolute difference: {max_diff:.15e}")
+print(f"  Mean difference:         {mean_diff:.15e}")
+print(f"  Median difference:       {median_diff:.15e}")
+print(f"  Std deviation:           {std_diff:.15e}")
+print(f"  Tolerance:               {TOLERANCE:.15e}")
 print()
 
-# Calculate absolute differences
-diff = np.abs(collector[FEATURE_NAMES].values - fxscalper[FEATURE_NAMES].values)
-max_diff = np.max(diff)
+if max_diff <= TOLERANCE and only_a == 0 and only_b == 0:
+    print("=" * 80)
+    print("PASS — Feature Skew Test Successful")
+    print("=" * 80)
+    raise SystemExit(0)
+
+print("=" * 80)
+print("FAIL — Feature Skew Detected")
+print("=" * 80)
+print()
+
 max_per_col = np.max(diff, axis=0)
-max_per_row = np.max(diff, axis=1)
-
-# Calculate statistics
-tolerance = 0.000001
-mean_diff = np.mean(diff)
-median_diff = np.median(diff)
-std_diff = np.std(diff)
-
-print(f"DIFFERENCE STATISTICS:")
-print(f"  Max absolute difference:    {max_diff:.15e}")
-print(f"  Mean difference:            {mean_diff:.15e}")
-print(f"  Median difference:          {median_diff:.15e}")
-print(f"  Std deviation:              {std_diff:.15e}")
-print(f"  Tolerance:                  {tolerance:.15e}")
+print("Features exceeding tolerance:")
+for i, col in enumerate(FEATURE_NAMES):
+    if max_per_col[i] > TOLERANCE:
+        print(f"  {col:30s}: max diff = {max_per_col[i]:.6e}")
 print()
 
-# Test result
-if max_diff <= tolerance:
-    print("=" * 80)
-    print("PASS - Feature Skew Test Successful")
-    print("=" * 80)
-    print()
-    print(f"Conclusion: DataCollector and FxScalper_ML compute IDENTICAL features")
-    print(f"            within floating point precision (max diff <= {tolerance:.0e})")
-    print()
-    print("Interpretation:")
-    print("  * Both use shared FeatureComputer class")
-    print("  * Identical indicator initialization")
-    print("  * Identical bar indexing")
-    print("  * Train/serve consistency GUARANTEED")
-    print()
-    print("Next Step: Remove temporary CSV logging from FxScalper_ML and deploy")
-    exit(0)
-else:
-    print("=" * 80)
-    print("FAIL - Feature Skew Detected")
-    print("=" * 80)
-    print()
-    print(f"Max difference {max_diff:.15e} exceeds tolerance {tolerance:.15e}")
-    print()
-    print("Features with differences > tolerance:")
-    for i, col in enumerate(FEATURE_NAMES):
-        if max_per_col[i] > tolerance:
-            print(f"  {col:30s}: max diff = {max_per_col[i]:.15e}")
-    print()
-    print("Investigation needed:")
-    print("  1. Check indicator initialization (same parameters in both cBots?)")
-    print("  2. Check bar indexing (closedBarIdx calculation identical?)")
-    print("  3. Check stateful fields (MTF tracking, ATR history initialized same?)")
-    print("  4. Check data types (float precision issues?)")
-    exit(1)
+max_per_row = np.max(diff, axis=1)
+worst_rows = np.argsort(max_per_row)[-5:][::-1]
+print("Top 5 worst-aligned rows (by max per-row diff):")
+for r in worst_rows:
+    ts = joined["_ts"].iloc[r]
+    worst_feat_idx = int(np.argmax(diff[r]))
+    feat_name = FEATURE_NAMES[worst_feat_idx]
+    a_val = a_vals[r, worst_feat_idx]
+    b_val = b_vals[r, worst_feat_idx]
+    print(f"  {ts}  feat={feat_name:28s}  DC={a_val:.6f}  FS={b_val:.6f}  diff={diff[r, worst_feat_idx]:.6e}")
+
+raise SystemExit(1)
