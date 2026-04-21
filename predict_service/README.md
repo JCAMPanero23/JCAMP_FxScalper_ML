@@ -139,54 +139,81 @@ LIMIT 10;
 - **p99 latency target:** <10 ms
 - **Throughput:** Handles 200+ requests/second (well above cBot needs)
 
-## VPS Deployment
+## VPS Deployment (Current: Hetzner CX23, Ubuntu 22.04)
+
+**Live VPS:** `91.99.227.165` | Service: `jcamp-predict` (systemd)
 
 ### Prerequisites
 
-1. Windows Server 2019+ (Vultr London datacenter recommended)
-2. Python 3.11 installed
-3. NSSM (https://nssm.cc/download) installed
-4. cTrader Desktop running
+1. Ubuntu 22.04 VPS (Hetzner CX23)
+2. Python 3.11 + venv at `/opt/jcamp/venv`
+3. Service files at `/opt/jcamp/predict_service/`
 
-### Steps
+### Install as systemd service (auto-restarts on crash)
 
-1. Copy `predict_service/` to VPS (e.g., `D:\JCAMP_FxScalper_ML\predict_service\`)
-2. Copy trained model to `predict_service/models/`
-3. Install dependencies:
-   ```bash
-   cd predict_service
-   pip install -r requirements.txt
-   ```
-4. Test locally first:
-   ```bash
-   python -m uvicorn app:app --host 127.0.0.1 --port 8000
-   ```
-5. Verify with curl:
-   ```bash
-   curl http://localhost:8000/health
-   ```
-6. Edit `install_service.bat` paths to match your VPS
-7. Run as Administrator:
-   ```bash
-   install_service.bat
-   ```
-8. Start the service:
-   ```bash
-   nssm start JCAMP_FxScalper_ML_API
-   ```
+```bash
+cp jcamp-predict.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable jcamp-predict   # auto-start on boot
+systemctl start jcamp-predict
+systemctl status jcamp-predict
+```
 
-### Task Scheduler for Healthchecks
+### Common management commands
 
-To run healthchecks every 5 minutes:
+```bash
+systemctl restart jcamp-predict   # restart
+systemctl stop jcamp-predict      # stop
+journalctl -u jcamp-predict -f    # tail live logs
+journalctl -u jcamp-predict --since "1 hour ago"  # recent logs
+curl http://localhost:8000/health  # verify locally
+```
 
-1. Open Task Scheduler
-2. Create Basic Task:
-   - Name: `JCAMP_FxScalper_ML_Healthcheck`
-   - Trigger: Repeat every 5 minutes
-   - Action: Start a program
-     - Program: `C:\Python311\python.exe`
-     - Arguments: `D:\JCAMP_FxScalper_ML\predict_service\healthcheck.py`
-     - Start in: `D:\JCAMP_FxScalper_ML\predict_service`
+### Firewall (UFW)
+
+Port 8000 is open to anywhere (dynamic IP support — cTrader runs on a home connection with rotating IP):
+
+```bash
+ufw status                          # check rules
+ufw allow 8000                      # open to anywhere (current config)
+# When cTrader moves to a static Windows VPS, lock it down:
+# ufw delete allow 8000
+# ufw allow from <WINDOWS_VPS_IP> to any port 8000
+```
+
+> **Why open to anywhere?** The home internet IP rotates dynamically. On 2026-04-21,
+> a rotating IP caused a ~6-hour outage (10:45am–16:22 UTC) when UFW blocked the new IP.
+> Once cTrader moves to a Windows VPS with a static IP, restrict port 8000 to that IP only.
+
+### cBot Auto-Recovery (SSH-based)
+
+The cBot (`JCAMP_FxScalper_ML.cs`) monitors API health and SSHes into this VPS to
+restart the systemd service when 3 consecutive failures are detected.
+
+**Required one-time setup on the cTrader machine:**
+
+```powershell
+# Generate SSH key (if not already present)
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\jcamp_vps" -N ""
+
+# Copy public key to VPS
+type "$env:USERPROFILE\.ssh\jcamp_vps.pub" | ssh root@91.99.227.165 "cat >> ~/.ssh/authorized_keys"
+
+# Test passwordless login
+ssh -i "$env:USERPROFILE\.ssh\jcamp_vps" root@91.99.227.165 "systemctl status jcamp-predict"
+```
+
+**cBot parameters to set:**
+
+| Parameter | Value |
+|---|---|
+| Auto-Restart API Service | `true` |
+| VPS SSH Host | `91.99.227.165` |
+| VPS SSH User | `root` |
+| SSH Key Path | `C:\Users\Jcamp_Laptop\.ssh\jcamp_vps` |
+| VPS Service Name | `jcamp-predict` |
+
+The cBot will run: `ssh -i <key> root@91.99.227.165 "systemctl restart jcamp-predict"`
 
 ## Troubleshooting
 

@@ -66,8 +66,17 @@ namespace cAlgo.Robots
         [Parameter("Auto-Restart API Service", DefaultValue = true)]
         public bool AutoRestartService { get; set; }
 
-        [Parameter("Task Scheduler Name", DefaultValue = "JCAMP_FxScalper_ML_API")]
-        public string ScheduledTaskName { get; set; }
+        [Parameter("VPS SSH Host", DefaultValue = "91.99.227.165")]
+        public string VpsSshHost { get; set; }
+
+        [Parameter("VPS SSH User", DefaultValue = "root")]
+        public string VpsSshUser { get; set; }
+
+        [Parameter("SSH Key Path", DefaultValue = "")]
+        public string SshKeyPath { get; set; }
+
+        [Parameter("VPS Service Name", DefaultValue = "jcamp-predict")]
+        public string VpsServiceName { get; set; }
 
         [Parameter("=== RISK MANAGEMENT ===", DefaultValue = "")]
         public string RiskHeader { get; set; }
@@ -428,9 +437,22 @@ namespace cAlgo.Robots
 
             try
             {
-                // Trigger the Windows Scheduled Task we registered
-                var psi = new ProcessStartInfo("schtasks.exe",
-                    $"/run /tn \"{ScheduledTaskName}\"")
+                // SSH into the Hetzner VPS and restart the systemd service.
+                // Requires OpenSSH client (built into Windows 10/11) and a
+                // passwordless SSH key pair — run once manually to add VPS to known_hosts:
+                //   ssh -i <SshKeyPath> root@91.99.227.165
+                string keyArgs = string.IsNullOrWhiteSpace(SshKeyPath)
+                    ? ""
+                    : $"-i \"{SshKeyPath}\" ";
+
+                string sshArgs = $"{keyArgs}" +
+                                 $"-o StrictHostKeyChecking=no " +
+                                 $"-o ConnectTimeout=10 " +
+                                 $"-o BatchMode=yes " +
+                                 $"{VpsSshUser}@{VpsSshHost} " +
+                                 $"\"systemctl restart {VpsServiceName}\"";
+
+                var psi = new ProcessStartInfo("ssh", sshArgs)
                 {
                     CreateNoWindow = true,
                     UseShellExecute = false,
@@ -440,18 +462,18 @@ namespace cAlgo.Robots
 
                 using (var proc = Process.Start(psi))
                 {
-                    proc.WaitForExit(5000);
-                    string output = proc.StandardOutput.ReadToEnd().Trim();
+                    proc.WaitForExit(15000);
+                    string err = proc.StandardError.ReadToEnd().Trim();
                     if (proc.ExitCode == 0)
-                        Print($"[RECOVERY] Scheduled task '{ScheduledTaskName}' triggered " +
-                              $"(attempt #{_totalRestartAttempts}). Service should start within 10-15s.");
+                        Print($"[RECOVERY] SSH restart of '{VpsServiceName}' on {VpsSshHost} succeeded " +
+                              $"(attempt #{_totalRestartAttempts}). Service should be up in ~5s.");
                     else
-                        Print($"[RECOVERY] schtasks exit {proc.ExitCode}: {output}");
+                        Print($"[RECOVERY] SSH restart failed (exit {proc.ExitCode}): {err}");
                 }
             }
             catch (Exception ex)
             {
-                Print($"[RECOVERY] Failed to trigger restart: {ex.Message}");
+                Print($"[RECOVERY] SSH restart exception: {ex.Message}");
             }
         }
 
