@@ -13,7 +13,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
+using System.Net.Mail;
 using System.Text;
 using cAlgo.API;
 using cAlgo.API.Indicators;
@@ -38,6 +41,33 @@ namespace cAlgo.Robots
 
         [Parameter("API Timeout (ms)", DefaultValue = 5000, MinValue = 1000, MaxValue = 30000)]
         public int ApiTimeoutMs { get; set; }
+
+        [Parameter("=== ALERTS & RECOVERY ===", DefaultValue = "")]
+        public string AlertHeader { get; set; }
+
+        [Parameter("Enable Email Alerts", DefaultValue = false)]
+        public bool EnableEmailAlerts { get; set; }
+
+        [Parameter("Alert Email (recipient)", DefaultValue = "jessiecampanero23@gmail.com")]
+        public string AlertEmail { get; set; }
+
+        [Parameter("Sender Email", DefaultValue = "jessiecampanero23@gmail.com")]
+        public string SenderEmail { get; set; }
+
+        [Parameter("Sender Password / App Password", DefaultValue = "")]
+        public string GmailAppPassword { get; set; }
+
+        [Parameter("SMTP Host", DefaultValue = "smtp.gmail.com")]
+        public string SmtpHost { get; set; }
+
+        [Parameter("SMTP Port", DefaultValue = 587)]
+        public int SmtpPort { get; set; }
+
+        [Parameter("Auto-Restart API Service", DefaultValue = true)]
+        public bool AutoRestartService { get; set; }
+
+        [Parameter("Task Scheduler Name", DefaultValue = "JCAMP_FxScalper_ML_API")]
+        public string ScheduledTaskName { get; set; }
 
         [Parameter("=== RISK MANAGEMENT ===", DefaultValue = "")]
         public string RiskHeader { get; set; }
@@ -78,6 +108,16 @@ namespace cAlgo.Robots
 
         private FeatureComputer _features;
         private HttpClient _httpClient;
+
+        // API health tracking
+        private int _consecutiveApiFailures = 0;
+        private bool _apiDownAlertSent = false;
+        private const int API_ALERT_THRESHOLD = 3;
+
+        // Auto-restart tracking
+        private DateTime _lastRestartAttempt = DateTime.MinValue;
+        private int _totalRestartAttempts = 0;
+        private const int RESTART_COOLDOWN_MIN = 30;
 
         // Indicators (same as DataCollector)
         private SimpleMovingAverage _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275;
@@ -207,6 +247,9 @@ namespace cAlgo.Robots
                 return;
             }
 
+            // Skip entry logic if trading disabled (feature skew test mode)
+            if (!EnableTrading) return;
+
             // Entry logic: call API with fresh features, execute trade if signal > threshold
             double pWinLong = CallPredictApi(feat);
             if (pWinLong < 0) return; // API error
@@ -263,59 +306,189 @@ namespace cAlgo.Robots
 
         private double CallPredictApi(Dictionary<string, double> features)
         {
-            try
+            // Build JSON payload once — reused on retry
+            var sb = new StringBuilder();
+            sb.Append("{\"symbol\":\"").Append(SymbolName).Append("\",");
+            sb.Append("\"timestamp\":\"").Append(Server.Time.ToString("o")).Append("\",");
+            sb.Append("\"features\":{");
+
+            bool first = true;
+            foreach (var name in FeatureComputer.FEATURE_NAMES)
             {
-                // Build JSON request
-                var sb = new StringBuilder();
-                sb.Append("{\"symbol\":\"").Append(SymbolName).Append("\",");
-                sb.Append("\"timestamp\":\"").Append(Server.Time.ToString("o")).Append("\",");
-                sb.Append("\"features\":{");
+                if (!first) sb.Append(",");
+                sb.Append("\"").Append(name).Append("\":");
+                sb.Append(features[name].ToString("G17"));
+                first = false;
+            }
+            sb.Append("}}");
 
-                bool first = true;
-                foreach (var name in FeatureComputer.FEATURE_NAMES)
+            string payload = sb.ToString();
+
+            // One retry: attempt 1 → short wait → attempt 2
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try
                 {
-                    if (!first) sb.Append(",");
-                    sb.Append("\"").Append(name).Append("\":");
-                    sb.Append(features[name].ToString("G17")); // full precision
-                    first = false;
-                }
-                sb.Append("}}");
+                    if (attempt == 2)
+                        System.Threading.Thread.Sleep(1000); // 1 s before retry
 
-                var content = new StringContent(
-                    sb.ToString(), Encoding.UTF8, "application/json");
+                    var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                    var response = _httpClient.PostAsync(ApiUrl, content).Result;
 
-                var response = _httpClient.PostAsync(ApiUrl, content).Result;
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Print($"[API] Error: HTTP {response.StatusCode}");
+                        if (attempt == 2) { RecordApiFailure(); return -1; }
+                        continue;
+                    }
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    Print($"[API] Error: HTTP {response.StatusCode}");
+                    var json = response.Content.ReadAsStringAsync().Result;
+
+                    int idx = json.IndexOf("\"p_win_long\":");
+                    if (idx < 0) { Print("[API] Missing p_win_long in response"); return -1; }
+
+                    int valStart = idx + "\"p_win_long\":".Length;
+                    int valEnd = json.IndexOfAny(new[] { ',', '}' }, valStart);
+                    string valStr = json.Substring(valStart, valEnd - valStart).Trim();
+
+                    if (double.TryParse(valStr, System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out double pWin))
+                    {
+                        RecordApiSuccess();
+                        return pWin;
+                    }
+
+                    Print($"[API] Failed to parse p_win_long: '{valStr}'");
                     return -1;
                 }
-
-                var json = response.Content.ReadAsStringAsync().Result;
-
-                // Simple JSON parsing (avoid dependency on Json library)
-                // Look for "p_win_long": 0.xxxxx
-                int idx = json.IndexOf("\"p_win_long\":");
-                if (idx < 0) { Print("[API] Missing p_win_long in response"); return -1; }
-
-                int valStart = idx + "\"p_win_long\":".Length;
-                int valEnd = json.IndexOfAny(new[] { ',', '}' }, valStart);
-                string valStr = json.Substring(valStart, valEnd - valStart).Trim();
-
-                if (double.TryParse(valStr, System.Globalization.NumberStyles.Any,
-                    System.Globalization.CultureInfo.InvariantCulture, out double pWin))
+                catch (Exception ex)
                 {
-                    return pWin;
+                    if (attempt == 1)
+                        Print($"[API] Exception (attempt 1, retrying): {ex.Message}");
+                    else
+                    {
+                        Print($"[API] Exception: {ex.Message}");
+                        RecordApiFailure();
+                    }
                 }
+            }
 
-                Print($"[API] Failed to parse p_win_long: '{valStr}'");
-                return -1;
+            return -1;
+        }
+
+        private void RecordApiFailure()
+        {
+            _consecutiveApiFailures++;
+
+            if (_consecutiveApiFailures == API_ALERT_THRESHOLD)
+            {
+                string msg = $"API service down — {_consecutiveApiFailures} consecutive failures " +
+                             $"({Server.Time:yyyy-MM-dd HH:mm} UTC). Trading suspended. " +
+                             $"Auto-restart will be attempted.";
+                Print($"[ALERT] *** API SERVICE DOWN *** {msg}");
+                SendEmailAlert("JCAMP FxScalper — API Service DOWN", msg);
+                TryRestartService();
+            }
+            else if (_consecutiveApiFailures > API_ALERT_THRESHOLD)
+            {
+                // Retry restart every RESTART_COOLDOWN_MIN minutes
+                if (AutoRestartService &&
+                    (Server.Time - _lastRestartAttempt).TotalMinutes >= RESTART_COOLDOWN_MIN)
+                {
+                    Print($"[ALERT] *** API STILL DOWN *** — {_consecutiveApiFailures} failures " +
+                          $"({_consecutiveApiFailures * 5} min). Retrying service restart...");
+                    TryRestartService();
+                }
+                else if (_consecutiveApiFailures % 12 == 0) // log reminder every ~1 hour
+                {
+                    Print($"[ALERT] API still down — {_consecutiveApiFailures} failures " +
+                          $"({_consecutiveApiFailures * 5} min).");
+                }
+            }
+        }
+
+        private void RecordApiSuccess()
+        {
+            if (_consecutiveApiFailures >= API_ALERT_THRESHOLD)
+            {
+                string msg = $"API service recovered after {_consecutiveApiFailures} failures " +
+                             $"({_consecutiveApiFailures * 5} min downtime). Trading resumed.";
+                Print($"[API] *** SERVICE RECOVERED *** {msg}");
+                SendEmailAlert("JCAMP FxScalper — API Service RECOVERED", msg);
+            }
+            _consecutiveApiFailures = 0;
+        }
+
+        private void TryRestartService()
+        {
+            if (!AutoRestartService) return;
+
+            _lastRestartAttempt = Server.Time;
+            _totalRestartAttempts++;
+
+            try
+            {
+                // Trigger the Windows Scheduled Task we registered
+                var psi = new ProcessStartInfo("schtasks.exe",
+                    $"/run /tn \"{ScheduledTaskName}\"")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using (var proc = Process.Start(psi))
+                {
+                    proc.WaitForExit(5000);
+                    string output = proc.StandardOutput.ReadToEnd().Trim();
+                    if (proc.ExitCode == 0)
+                        Print($"[RECOVERY] Scheduled task '{ScheduledTaskName}' triggered " +
+                              $"(attempt #{_totalRestartAttempts}). Service should start within 10-15s.");
+                    else
+                        Print($"[RECOVERY] schtasks exit {proc.ExitCode}: {output}");
+                }
             }
             catch (Exception ex)
             {
-                Print($"[API] Exception: {ex.Message}");
-                return -1;
+                Print($"[RECOVERY] Failed to trigger restart: {ex.Message}");
+            }
+        }
+
+        private void SendEmailAlert(string subject, string body)
+        {
+            if (!EnableEmailAlerts) return;
+            if (string.IsNullOrWhiteSpace(GmailAppPassword)) return;
+
+            try
+            {
+                using (var smtp = new SmtpClient(SmtpHost, SmtpPort))
+                {
+                    smtp.EnableSsl = true;
+                    smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
+                    smtp.UseDefaultCredentials = false;
+                    smtp.Credentials = new NetworkCredential(SenderEmail, GmailAppPassword);
+                    smtp.Timeout = 10000;
+
+                    string fullBody = $"{body}\n\n" +
+                                     $"Symbol : {SymbolName}\n" +
+                                     $"Server : {Server.Time:yyyy-MM-dd HH:mm:ss} UTC\n" +
+                                     $"API URL: {ApiUrl}\n" +
+                                     $"Bot    : JCAMP FxScalper ML v{BOT_VERSION}";
+
+                    var mail = new MailMessage(
+                        SenderEmail,
+                        AlertEmail,
+                        $"[cBot] {subject}",
+                        fullBody);
+
+                    smtp.Send(mail);
+                    Print($"[EMAIL] Alert sent: {subject}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"[EMAIL] Failed to send alert: {ex.Message}");
             }
         }
 
