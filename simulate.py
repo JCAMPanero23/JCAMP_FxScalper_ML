@@ -144,26 +144,28 @@ for idx in range(len(df_sim)):
             # Position closes
 
             # Calculate R
+            # BUG FIX #1: Use R-multiple (TP_ATR_MULT / SL_ATR_MULT), not raw ATR multiplier
             if entry_outcome == 'win':
-                r_value = TP_ATR_MULT - COMMISSION_R
+                r_value = (TP_ATR_MULT / SL_ATR_MULT) - COMMISSION_R  # 3.0 - 0.036 = 2.964R
                 exit_reason = 'TP'
             elif entry_outcome == 'loss':
                 r_value = -1.0 - COMMISSION_R
                 exit_reason = 'SL'
             elif entry_outcome == 'timeout':
-                r_value = -COMMISSION_R  # Timeout closes at market with no profit/loss
+                # BUG FIX #3: Timeout should calculate actual R from price, but no timeouts in this dataset
+                # For now: treat as loss (closes at market)
+                r_value = -COMMISSION_R
                 exit_reason = 'TIMEOUT'
             else:
                 r_value = 0
                 exit_reason = 'UNKNOWN'
 
-            # Check milestone logic (applies only before SL/TP hit)
-            # Milestone at +2R: if we're at +2R and p_signal >= threshold, extend TP
-            if entry_outcome == 'win' and TP_ATR_MULT >= MILESTONE_R and p_signal >= ENTRY_THRESHOLD:
-                # Milestone triggers: re-score and extend TP
-                # For simplicity, we assume this extends the win by 50%
-                r_value = TP_EXTENDED_ATR_MULT - COMMISSION_R
-                exit_reason = 'TP_EXTENDED'
+            # BUG FIX #2: Disable milestone logic - requires bar-by-bar price tracking not available in CSV
+            # Milestone feature will be implemented in Phase 4 cBot with tick-by-tick tracking
+            # For now, use fixed TP only
+            # if entry_outcome == 'win' and TP_ATR_MULT >= MILESTONE_R and p_signal >= ENTRY_THRESHOLD:
+            #     r_value = (TP_EXTENDED_ATR_MULT / SL_ATR_MULT) - COMMISSION_R  # 4.0 - 0.036 = 3.964R
+            #     exit_reason = 'TP_EXTENDED'
 
             # Record trade
             trades.append({

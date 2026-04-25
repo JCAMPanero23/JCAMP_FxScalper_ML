@@ -1,0 +1,13 @@
+﻿{
+  "Chart": {
+    "Symbol": "EURUSD",
+    "Period": "m5"
+  },
+  "Parameters": {
+    "OutputFolder": "D:\\JCAMP_FxScalper_ML\\data",
+    "SlAtrMult": 1.5,
+    "TpAtrMult": 4.5,
+    "MaxBarsToOutcome": 72,
+    "CommissionPerLot": 3.0
+  }
+}
