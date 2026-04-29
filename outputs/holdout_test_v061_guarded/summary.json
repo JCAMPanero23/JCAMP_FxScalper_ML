@@ -1,0 +1,92 @@
+{
+  "long": {
+    "raw": {
+      "label": "RAW (no guards, every signal = trade)",
+      "n_trades": 40,
+      "wins": 13,
+      "losses": 27,
+      "timeouts": 0,
+      "expectancy_r": 0.3,
+      "net_r": 12.0,
+      "profit_factor": 1.4444444444444444,
+      "max_consec_losses": 17,
+      "max_drawdown_r": 17.0
+    },
+    "pos_only": {
+      "label": "MAX_POSITIONS=1 ONLY",
+      "n_trades": 15,
+      "wins": 7,
+      "losses": 8,
+      "timeouts": 0,
+      "expectancy_r": 0.8666666666666667,
+      "net_r": 13.0,
+      "profit_factor": 2.625,
+      "max_consec_losses": 3,
+      "max_drawdown_r": 3.0
+    },
+    "guarded": {
+      "label": "MAX_POSITIONS=1 + GUARDS + COOLDOWN",
+      "n_trades": 6,
+      "wins": 3,
+      "losses": 3,
+      "timeouts": 0,
+      "expectancy_r": 1.0,
+      "net_r": 6.0,
+      "profit_factor": 3.0,
+      "max_consec_losses": 2,
+      "max_drawdown_r": 2.0
+    },
+    "guard_skip_counts": {
+      "p_below_thr": 36805,
+      "position_open": 7,
+      "cooldown": 10,
+      "stretch_guard": 8,
+      "mtf_guard": 9
+    }
+  },
+  "short": {
+    "raw": {
+      "label": "RAW (no guards, every signal = trade)",
+      "n_trades": 262,
+      "wins": 104,
+      "losses": 158,
+      "timeouts": 0,
+      "expectancy_r": 0.5877862595419847,
+      "net_r": 154.0,
+      "profit_factor": 1.9746835443037976,
+      "max_consec_losses": 39,
+      "max_drawdown_r": 51.0
+    },
+    "pos_only": {
+      "label": "MAX_POSITIONS=1 ONLY",
+      "n_trades": 43,
+      "wins": 22,
+      "losses": 21,
+      "timeouts": 0,
+      "expectancy_r": 1.0465116279069768,
+      "net_r": 45.0,
+      "profit_factor": 3.142857142857143,
+      "max_consec_losses": 6,
+      "max_drawdown_r": 6.0
+    },
+    "guarded": {
+      "label": "MAX_POSITIONS=1 + GUARDS + COOLDOWN",
+      "n_trades": 19,
+      "wins": 10,
+      "losses": 9,
+      "timeouts": 0,
+      "expectancy_r": 1.105263157894737,
+      "net_r": 21.0,
+      "profit_factor": 3.3333333333333335,
+      "max_consec_losses": 4,
+      "max_drawdown_r": 4.0
+    },
+    "guard_skip_counts": {
+      "p_below_thr": 36583,
+      "position_open": 65,
+      "cooldown": 14,
+      "stretch_guard": 102,
+      "mtf_guard": 62
+    }
+  }
+}

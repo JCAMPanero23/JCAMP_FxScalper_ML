@@ -1,0 +1,19 @@
+{
+  "direction": "long",
+  "test_period": "2025-10-01 to 2026-03-31",
+  "threshold": 0.65,
+  "n_trades": 40,
+  "n_wins": 13,
+  "n_losses": 27,
+  "n_timeouts": 0,
+  "win_rate": "32.5%",
+  "expectancy_r": "+0.300",
+  "net_r": "+12.0",
+  "profit_factor": "1.44",
+  "max_consec_losses": 17,
+  "max_drawdown_r": "17.0",
+  "cv_estimate_r": "+0.639",
+  "pct_of_cv": "47%",
+  "within_30pct_tolerance": false,
+  "verdict": "CAUTIOUS_PASS"
+}

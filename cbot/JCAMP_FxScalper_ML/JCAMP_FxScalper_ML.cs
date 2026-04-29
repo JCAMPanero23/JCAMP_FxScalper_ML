@@ -1,14 +1,17 @@
 // =============================================================================
-// JCAMP_FxScalper_ML v1.0
+// JCAMP_FxScalper_ML v1.1 (v0.6.1 models, 49 features)
 // -----------------------------------------------------------------------------
-// ML-filtered M5 LONG scalper. Computes features on each M5 bar close,
-// calls FastAPI for p_win_long, trades when p_win > threshold.
+// ML-filtered M5 scalper. Computes features on each M5 bar close,
+// calls FastAPI for p_win_long and p_win_short, trades when above threshold.
 //
-// LONG ONLY (v1.0). SHORT model did not pass Gate A.
+// LONG live by default. SHORT runs in shadow mode unless
+// EnableShortTrading is set to true. Both p_win values are logged on the
+// VPS regardless of action, so shadow-mode SHORT signals are captured.
 //
 // Author : JCamp
 // Target : cTrader Automate, EURUSD M5
-// Requires: FastAPI prediction service running on localhost:8000
+// Requires: FastAPI prediction service v0.6.1 (49-feature) running on
+//           localhost:8000 or a remote VPS endpoint.
 // =============================================================================
 
 using System;
@@ -33,8 +36,14 @@ namespace cAlgo.Robots
         [Parameter("=== ML SETTINGS ===", DefaultValue = "")]
         public string MLHeader { get; set; }
 
-        [Parameter("ML Threshold", DefaultValue = 0.65, MinValue = 0.50, MaxValue = 0.90, Step = 0.05)]
+        [Parameter("ML Threshold (LONG)", DefaultValue = 0.65, MinValue = 0.50, MaxValue = 0.90, Step = 0.05)]
         public double MLThreshold { get; set; }
+
+        [Parameter("ML Threshold (SHORT)", DefaultValue = 0.55, MinValue = 0.50, MaxValue = 0.90, Step = 0.05)]
+        public double MLThresholdShort { get; set; }
+
+        [Parameter("Enable SHORT Trading", DefaultValue = false)]
+        public bool EnableShortTrading { get; set; }
 
         [Parameter("API URL", DefaultValue = "http://localhost:8000/predict")]
         public string ApiUrl { get; set; }
@@ -259,14 +268,43 @@ namespace cAlgo.Robots
             // Skip entry logic if trading disabled (feature skew test mode)
             if (!EnableTrading) return;
 
-            // Entry logic: call API with fresh features, execute trade if signal > threshold
-            double pWinLong = CallPredictApi(feat);
-            if (pWinLong < 0) return; // API error
+            // Entry logic: call API once, score both directions
+            var preds = CallPredictApi(feat);
+            if (preds.IsError) return;
 
-            // Check threshold
-            if (pWinLong <= MLThreshold) return;
+            bool wantsLong  = preds.PWinLong  > MLThreshold;
+            bool wantsShort = preds.PWinShort > MLThresholdShort;
 
-            // Calculate position size and levels
+            // Shadow-mode SHORT: signal still logged on VPS (every /predict
+            // call writes both probabilities to prediction_log.db). We just
+            // don't trade on it unless EnableShortTrading is true.
+            if (wantsShort && !EnableShortTrading)
+            {
+                Print($"[SHADOW] SHORT signal p={preds.PWinShort:F3} (logged, not traded)");
+            }
+
+            // Resolve direction. LONG takes priority if both fire (rare with
+            // realistic thresholds). MaxPositions=1 already enforced above.
+            TradeType? direction = null;
+            double pUsed = 0.0;
+            string label = "";
+
+            if (wantsLong)
+            {
+                direction = TradeType.Buy;
+                pUsed = preds.PWinLong;
+                label = "LONG";
+            }
+            else if (wantsShort && EnableShortTrading)
+            {
+                direction = TradeType.Sell;
+                pUsed = preds.PWinShort;
+                label = "SHORT";
+            }
+
+            if (direction == null) return;
+
+            // Position sizing — same SL/TP math for both directions
             double atr = _atrM5_14.Result[closedBarIdx];
             double slPips = Math.Max(SlAtrMult * atr / Symbol.PipSize, 5.0);
             double tpPips = TpAtrMult * atr / Symbol.PipSize;
@@ -278,18 +316,17 @@ namespace cAlgo.Robots
             double volume = Symbol.NormalizeVolumeInUnits(
                 lots * Symbol.LotSize, RoundingMode.Down);
 
-            // Execute trade
             if (!EnableTrading) return;
 
             var result = ExecuteMarketOrder(
-                TradeType.Buy, SymbolName, volume,
+                direction.Value, SymbolName, volume,
                 BOT_LABEL, slPips, tpPips);
 
             if (result.IsSuccessful)
             {
-                Print($"[ENTRY] LONG @ {result.Position.EntryPrice:F5} | " +
+                Print($"[ENTRY] {label} @ {result.Position.EntryPrice:F5} | " +
                       $"SL={slPips:F1} pips | TP={tpPips:F1} pips | " +
-                      $"Lots={lots:F2} | p_win={pWinLong:F3}");
+                      $"Lots={lots:F2} | p_win={pUsed:F3}");
             }
             else
             {
@@ -313,7 +350,32 @@ namespace cAlgo.Robots
 
         #region API Client
 
-        private double CallPredictApi(Dictionary<string, double> features)
+        private struct Predictions
+        {
+            public double PWinLong;
+            public double PWinShort;
+            public bool IsError;
+        }
+
+        private static readonly Predictions ERROR_PREDICTIONS =
+            new Predictions { PWinLong = -1, PWinShort = -1, IsError = true };
+
+        private bool TryParseProbField(string json, string field, out double value)
+        {
+            value = -1;
+            int idx = json.IndexOf("\"" + field + "\":");
+            if (idx < 0) return false;
+
+            int valStart = idx + ("\"" + field + "\":").Length;
+            int valEnd = json.IndexOfAny(new[] { ',', '}' }, valStart);
+            if (valEnd < 0) return false;
+
+            string valStr = json.Substring(valStart, valEnd - valStart).Trim();
+            return double.TryParse(valStr, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        private Predictions CallPredictApi(Dictionary<string, double> features)
         {
             // Build JSON payload once — reused on retry
             var sb = new StringBuilder();
@@ -347,28 +409,31 @@ namespace cAlgo.Robots
                     if (!response.IsSuccessStatusCode)
                     {
                         Print($"[API] Error: HTTP {response.StatusCode}");
-                        if (attempt == 2) { RecordApiFailure(); return -1; }
+                        if (attempt == 2) { RecordApiFailure(); return ERROR_PREDICTIONS; }
                         continue;
                     }
 
                     var json = response.Content.ReadAsStringAsync().Result;
 
-                    int idx = json.IndexOf("\"p_win_long\":");
-                    if (idx < 0) { Print("[API] Missing p_win_long in response"); return -1; }
-
-                    int valStart = idx + "\"p_win_long\":".Length;
-                    int valEnd = json.IndexOfAny(new[] { ',', '}' }, valStart);
-                    string valStr = json.Substring(valStart, valEnd - valStart).Trim();
-
-                    if (double.TryParse(valStr, System.Globalization.NumberStyles.Any,
-                        System.Globalization.CultureInfo.InvariantCulture, out double pWin))
+                    if (!TryParseProbField(json, "p_win_long", out double pLong))
                     {
-                        RecordApiSuccess();
-                        return pWin;
+                        Print("[API] Missing or unparsable p_win_long in response");
+                        return ERROR_PREDICTIONS;
                     }
 
-                    Print($"[API] Failed to parse p_win_long: '{valStr}'");
-                    return -1;
+                    if (!TryParseProbField(json, "p_win_short", out double pShort))
+                    {
+                        Print("[API] Missing or unparsable p_win_short in response");
+                        return ERROR_PREDICTIONS;
+                    }
+
+                    RecordApiSuccess();
+                    return new Predictions
+                    {
+                        PWinLong = pLong,
+                        PWinShort = pShort,
+                        IsError = false,
+                    };
                 }
                 catch (Exception ex)
                 {
@@ -382,7 +447,7 @@ namespace cAlgo.Robots
                 }
             }
 
-            return -1;
+            return ERROR_PREDICTIONS;
         }
 
         private void RecordApiFailure()

@@ -8,8 +8,11 @@
 // DO NOT duplicate feature logic. If you need a new feature, add it HERE
 // and copy the file to both cBot folders.
 //
-// Version: v0.4 (46 features)
-// Last updated: 2026-04-18
+// Version: v0.6.1 (49 features)
+// Last updated: 2026-04-25
+// v0.6.1: replaced 3 local-structure features (bars_since_swing_high/low,
+//         pullback_depth_pct) that hurt CV with 3 H4 regime features
+//         (slope_sma_h4_200, mtf_with_h4_score, h4_alignment_duration).
 // =============================================================================
 
 using System;
@@ -28,7 +31,7 @@ namespace cAlgo.Robots
             "dist_sma_m5_50", "dist_sma_m5_100", "dist_sma_m5_200",
             "dist_sma_m5_275", "dist_sma_m15_200", "dist_sma_m30_200",
             "dist_sma_h1_200", "dist_sma_h4_200",
-            "slope_sma_m5_200", "slope_sma_h1_200",
+            "slope_sma_m5_200", "slope_sma_h1_200", "slope_sma_h4_200",
             "rsi_m5", "rsi_m15", "rsi_m30",
             "adx_m5", "di_plus_m5", "di_minus_m5",
             "atr_m5", "atr_m15", "atr_h1", "atr_ratio_m5_h1", "bb_width",
@@ -42,6 +45,7 @@ namespace cAlgo.Robots
             "bars_since_tf_fast_flip", "tf_fast_flip_direction",
             "mtf_alignment_duration",
             "atr_percentile_2000bar", "h1_alignment_agreement",
+            "mtf_with_h4_score", "h4_alignment_duration",
         };
 
         // Stateful fields (persist across bars)
@@ -50,13 +54,15 @@ namespace cAlgo.Robots
         private int _lastFlipDirection = 0;
         private int _prevAlignmentScore = 0;
         private int _alignmentRunLength = 0;
+        private int _prevH4Align = 0;
+        private int _h4RunLength = 0;
 
         private const int ATR_HISTORY_SIZE = 2000;
         private readonly Queue<double> _atrHistory = new Queue<double>();
 
         /// <summary>
-        /// Compute all 46 features for the just-closed M5 bar.
-        /// This method MUST produce identical output to DataCollector v0.4.
+        /// Compute all 49 features for the just-closed M5 bar.
+        /// This method MUST produce identical output across DataCollector and FxScalper_ML.
         /// </summary>
         /// <param name="bars">M5 chart bars</param>
         /// <param name="closedBarIdx">Index of the just-closed bar (Count-2)</param>
@@ -77,7 +83,7 @@ namespace cAlgo.Robots
         /// <param name="atrM15">ATR(14) on M15</param>
         /// <param name="atrH1">ATR(14) on H1</param>
         /// <param name="bbM5">Bollinger Bands on M5</param>
-        /// <returns>Dictionary of 46 features, or null if warmup incomplete</returns>
+        /// <returns>Dictionary of 49 features, or null if warmup incomplete</returns>
         public Dictionary<string, double> Compute(
             Bars bars, int closedBarIdx, Symbol symbol,
             SimpleMovingAverage smaM5_50, SimpleMovingAverage smaM5_100,
@@ -110,6 +116,7 @@ namespace cAlgo.Robots
             // --- SMA slopes (5-bar % change, computed at closed bar) --------
             f["slope_sma_m5_200"] = SmaSlopeAt(smaM5_200.Result, closedBarIdx, 5);
             f["slope_sma_h1_200"] = SmaSlopeHtf(smaH1_200.Result, 5);
+            f["slope_sma_h4_200"] = SmaSlopeHtf(smaH4_200.Result, 5);
 
             // --- Momentum ----------------------------------------------------
             f["rsi_m5"]      = rsiM5.Result[closedBarIdx];
@@ -300,6 +307,33 @@ namespace cAlgo.Robots
             else
                 f["h1_alignment_agreement"] = (mtfSign == h1Sign) ? 1 : -1;
 
+            // --- H4 regime (v0.6.1) -----------------------------------------
+            // Replaces failed v0.6 local-structure features. The ML had no
+            // direct way to see H4 macro trend persistence — only the
+            // instantaneous distance dist_sma_h4_200. These features add the
+            // direction and duration of the H4 regime so the model can
+            // recognize sustained bearish stretches that kill LONG.
+            int h4Align = (px > smaH4_200.Result.Last(1)) ? 1 : -1;
+
+            // mtf_with_h4_score: extends mtf_alignment_score to include H4.
+            // Range -5 to +5. -5 = price below SMA200 on M5/M15/M30/H1/H4.
+            f["mtf_with_h4_score"] = alignScore + h4Align;
+
+            // h4_alignment_duration: signed run length of H4 alignment side.
+            // +N = bull-aligned for N bars, -N = bear-aligned for N bars.
+            // Direct signal for "stale setup": LONG fights macro when this
+            // is deeply negative.
+            if (h4Align > 0)
+            {
+                _h4RunLength = (_prevH4Align > 0) ? _h4RunLength + 1 : 1;
+            }
+            else
+            {
+                _h4RunLength = (_prevH4Align < 0) ? _h4RunLength - 1 : -1;
+            }
+            _prevH4Align = h4Align;
+            f["h4_alignment_duration"] = Math.Max(-200, Math.Min(200, _h4RunLength));
+
             return f;
         }
 
@@ -329,6 +363,8 @@ namespace cAlgo.Robots
             _lastFlipDirection = 0;
             _prevAlignmentScore = 0;
             _alignmentRunLength = 0;
+            _prevH4Align = 0;
+            _h4RunLength = 0;
             _atrHistory.Clear();
         }
     }

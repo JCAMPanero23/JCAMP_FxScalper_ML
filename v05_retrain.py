@@ -141,7 +141,9 @@ for fold_idx, (train_idx, test_idx) in enumerate(cv.split(X, y, bars_to_outcome)
     metrics = evaluate_model(model, X_test_fold, y_test_fold, verbose=False)
 
     # Trading metrics (using v05 risk_reward=3.0)
-    y_pred = model.predict(X_test_fold)
+    # FIX: .predict() returns hard 0/1 labels — use predict_proba so the
+    # threshold filter actually does something.
+    y_pred = model.predict_proba(X_test_fold)[:, 1]
     trading_metrics = calculate_trading_metrics(
         y_test_fold.values, y_pred,
         risk_reward=V05_PARAMS['risk_reward'],  # v05: 3.0 (not 2.0)
