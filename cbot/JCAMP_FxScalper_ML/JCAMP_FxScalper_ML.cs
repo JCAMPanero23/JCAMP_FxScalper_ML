@@ -160,6 +160,18 @@ namespace cAlgo.Robots
         private bool _monthlyLimitHit = false;
         private bool _consecLimitHit = false;
 
+        // Heartbeat: confirms cBot is alive on the cTrader side, independent
+        // of the FastAPI/VPS logs. Logs every HEARTBEAT_MIN minutes on bar close.
+        private DateTime _lastHeartbeat = DateTime.MinValue;
+        private const int HEARTBEAT_MIN = 10;
+
+        // ML status report: latest predictions + tier vs threshold, every 20 min.
+        private DateTime _lastMlReport = DateTime.MinValue;
+        private const int ML_REPORT_MIN = 20;
+        private double _lastPLong = -1;
+        private double _lastPShort = -1;
+        private DateTime _lastPredictTime = DateTime.MinValue;
+
         #endregion
 
         #region Initialization
@@ -233,6 +245,37 @@ namespace cAlgo.Robots
             if (Bars.ClosePrices.Count < 300) return;
             if (_h4.ClosePrices.Count < 200) return;
 
+            // Heartbeat: prove cBot is alive on cTrader independent of VPS logs.
+            if ((Server.Time - _lastHeartbeat).TotalMinutes >= HEARTBEAT_MIN)
+            {
+                int openCount = Positions.FindAll(BOT_LABEL, SymbolName).Length;
+                Print($"[HEARTBEAT] {Server.Time:yyyy-MM-dd HH:mm} UTC | " +
+                      $"Bars={Bars.ClosePrices.Count} | OpenPos={openCount} | " +
+                      $"ApiFails={_consecutiveApiFailures} | " +
+                      $"DailyR={_dailyRLoss:F2} | Equity={Account.Equity:F2}");
+                _lastHeartbeat = Server.Time;
+            }
+
+            // ML status report every 20 min: latest p_win values vs thresholds.
+            // Tier = IDLE (<0.50) / WATCHING (>=0.50, <threshold) / FIRE (>=threshold).
+            if ((Server.Time - _lastMlReport).TotalMinutes >= ML_REPORT_MIN)
+            {
+                if (_lastPredictTime == DateTime.MinValue)
+                {
+                    Print($"[ML REPORT] No predictions yet (EnableTrading={EnableTrading}, " +
+                          $"ApiFails={_consecutiveApiFailures})");
+                }
+                else
+                {
+                    double age = (Server.Time - _lastPredictTime).TotalMinutes;
+                    Print($"[ML REPORT] LONG p={_lastPLong:F3} {TierFor(_lastPLong, MLThreshold)} " +
+                          $"(thr {MLThreshold:F2}) | " +
+                          $"SHORT p={_lastPShort:F3} {TierFor(_lastPShort, MLThresholdShort)} " +
+                          $"(thr {MLThresholdShort:F2}) | age={age:F0}min");
+                }
+                _lastMlReport = Server.Time;
+            }
+
             int closedBarIdx = Bars.ClosePrices.Count - 2;
 
             // Reset daily counters
@@ -271,6 +314,11 @@ namespace cAlgo.Robots
             // Entry logic: call API once, score both directions
             var preds = CallPredictApi(feat);
             if (preds.IsError) return;
+
+            // Cache for [ML REPORT] heartbeat
+            _lastPLong = preds.PWinLong;
+            _lastPShort = preds.PWinShort;
+            _lastPredictTime = Server.Time;
 
             bool wantsLong  = preds.PWinLong  > MLThreshold;
             bool wantsShort = preds.PWinShort > MLThresholdShort;
@@ -332,6 +380,14 @@ namespace cAlgo.Robots
             {
                 Print($"[ERROR] Order failed: {result.Error}");
             }
+        }
+
+        private static string TierFor(double p, double threshold)
+        {
+            if (p < 0) return "N/A";
+            if (p >= threshold) return "FIRE";
+            if (p >= 0.50) return "WATCHING";
+            return "IDLE";
         }
 
         /// <summary>
