@@ -117,6 +117,12 @@ namespace cAlgo.Robots
         [Parameter("Enable Trading", DefaultValue = false)]
         public bool EnableTrading { get; set; }
 
+        [Parameter("=== TESTING ===", DefaultValue = "")]
+        public string TestHeader { get; set; }
+
+        [Parameter("Force Test Trade (LONG, fires once)", DefaultValue = false)]
+        public bool ForceTestTrade { get; set; }
+
         #endregion
 
         #region Private Fields
@@ -171,6 +177,9 @@ namespace cAlgo.Robots
         private double _lastPLong = -1;
         private double _lastPShort = -1;
         private DateTime _lastPredictTime = DateTime.MinValue;
+
+        // Test trade: fires once per session when ForceTestTrade=true
+        private bool _testTradeFired = false;
 
         #endregion
 
@@ -311,6 +320,26 @@ namespace cAlgo.Robots
             // Skip entry logic if trading disabled (feature skew test mode)
             if (!EnableTrading) return;
 
+            // Test trade override — bypasses ML thresholds for ONE entry to verify
+            // position sizing. Fires once per session, then disables itself.
+            // Disable ForceTestTrade in cBot params after the test fills.
+            if (ForceTestTrade && !_testTradeFired)
+            {
+                _testTradeFired = true;
+                var size = ComputeOrderSize(closedBarIdx);
+                Print($"[TEST] Override LONG entry. {size.Debug}");
+                var testResult = ExecuteMarketOrder(
+                    TradeType.Buy, SymbolName, size.Volume,
+                    BOT_LABEL, size.SlPips, size.TpPips);
+                if (testResult.IsSuccessful)
+                    Print($"[TEST] SUCCESS @ {testResult.Position.EntryPrice:F5} | " +
+                          $"Volume={size.Volume:F0} units | " +
+                          $"Close manually + uncheck ForceTestTrade.");
+                else
+                    Print($"[TEST] FAILED: {testResult.Error}. {size.Debug}");
+                return;
+            }
+
             // Entry logic: call API once, score both directions
             var preds = CallPredictApi(feat);
             if (preds.IsError) return;
@@ -352,34 +381,78 @@ namespace cAlgo.Robots
 
             if (direction == null) return;
 
-            // Position sizing — same SL/TP math for both directions
-            double atr = _atrM5_14.Result[closedBarIdx];
-            double slPips = Math.Max(SlAtrMult * atr / Symbol.PipSize, 5.0);
-            double tpPips = TpAtrMult * atr / Symbol.PipSize;
-
-            double riskAmount = Account.Equity * (RiskPercent / 100.0);
-            double pipValue = Symbol.PipValue;
-            double lots = Math.Round(riskAmount / (slPips * pipValue), 2);
-            lots = Math.Max(lots, Symbol.VolumeInUnitsMin / Symbol.LotSize);
-            double volume = Symbol.NormalizeVolumeInUnits(
-                lots * Symbol.LotSize, RoundingMode.Down);
-
-            if (!EnableTrading) return;
+            // Position sizing — fixed math (Symbol.PipValue is per UNIT, not per lot)
+            var sizing = ComputeOrderSize(closedBarIdx);
+            Print($"[SIZING] {sizing.Debug}");
 
             var result = ExecuteMarketOrder(
-                direction.Value, SymbolName, volume,
-                BOT_LABEL, slPips, tpPips);
+                direction.Value, SymbolName, sizing.Volume,
+                BOT_LABEL, sizing.SlPips, sizing.TpPips);
 
             if (result.IsSuccessful)
             {
                 Print($"[ENTRY] {label} @ {result.Position.EntryPrice:F5} | " +
-                      $"SL={slPips:F1} pips | TP={tpPips:F1} pips | " +
-                      $"Lots={lots:F2} | p_win={pUsed:F3}");
+                      $"SL={sizing.SlPips:F1}p | TP={sizing.TpPips:F1}p | " +
+                      $"Vol={sizing.Volume:F0}u (~{sizing.Volume / Symbol.LotSize:F2} lots) | " +
+                      $"p_win={pUsed:F3}");
             }
             else
             {
                 Print($"[ERROR] Order failed: {result.Error}");
             }
+        }
+
+        /// <summary>
+        /// Computes order volume in UNITS using risk-based sizing.
+        /// FIX: Symbol.PipValue is denominated in account currency PER UNIT (not per lot).
+        /// Previous code multiplied as if PipValue were per lot, producing volumes
+        /// off by Symbol.LotSize (100,000 for EURUSD), e.g. 9,580 lots instead of 0.10.
+        /// Includes a 10x-equity notional cap as a safety net for future regressions.
+        /// </summary>
+        private OrderSize ComputeOrderSize(int closedBarIdx)
+        {
+            double atr = _atrM5_14.Result[closedBarIdx];
+            double slPips = Math.Max(SlAtrMult * atr / Symbol.PipSize, 5.0);
+            double tpPips = TpAtrMult * atr / Symbol.PipSize;
+
+            double riskAmount = Account.Equity * (RiskPercent / 100.0);
+            double rawUnits = riskAmount / (slPips * Symbol.PipValue);
+            double volume = Symbol.NormalizeVolumeInUnits(rawUnits, RoundingMode.Down);
+            volume = Math.Max(volume, Symbol.VolumeInUnitsMin);
+
+            // Safety: cap notional at 10x equity. Defends against pipValue/leverage
+            // regressions; if hit, log it loudly so the bug is obvious.
+            double price = Bars.ClosePrices.LastValue;
+            double notional = volume * price;
+            double maxNotional = Account.Equity * 10.0;
+            bool capped = false;
+            if (notional > maxNotional)
+            {
+                volume = Symbol.NormalizeVolumeInUnits(maxNotional / price, RoundingMode.Down);
+                volume = Math.Max(volume, Symbol.VolumeInUnitsMin);
+                capped = true;
+            }
+
+            string debug = $"ATR={atr:F5} SL={slPips:F1}p TP={tpPips:F1}p | " +
+                           $"Risk=${riskAmount:F2} PipVal/unit=${Symbol.PipValue:F6} | " +
+                           $"Vol={volume:F0}u (~{volume / Symbol.LotSize:F2} lots)" +
+                           (capped ? " [NOTIONAL CAPPED]" : "");
+
+            return new OrderSize
+            {
+                Volume = volume,
+                SlPips = slPips,
+                TpPips = tpPips,
+                Debug = debug,
+            };
+        }
+
+        private struct OrderSize
+        {
+            public double Volume;
+            public double SlPips;
+            public double TpPips;
+            public string Debug;
         }
 
         private static string TierFor(double p, double threshold)
