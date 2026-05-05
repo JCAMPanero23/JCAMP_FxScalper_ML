@@ -1,0 +1,839 @@
+// =============================================================================
+// JCAMP_FxScalper_ML v1.1 (v0.6.1 models, 49 features)
+// -----------------------------------------------------------------------------
+// ML-filtered M5 scalper. Computes features on each M5 bar close,
+// calls FastAPI for p_win_long and p_win_short, trades when above threshold.
+//
+// LONG live by default. SHORT runs in shadow mode unless
+// EnableShortTrading is set to true. Both p_win values are logged on the
+// VPS regardless of action, so shadow-mode SHORT signals are captured.
+//
+// Author : JCamp
+// Target : cTrader Automate, EURUSD M5
+// Requires: FastAPI prediction service v0.6.1 (49-feature) running on
+//           localhost:8000 or a remote VPS endpoint.
+// =============================================================================
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
+using System.Net.Mail;
+using System.Text;
+using cAlgo.API;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
+using cAlgo.Robots;
+
+namespace cAlgo.Robots
+{
+    [Robot(AccessRights = AccessRights.FullAccess, AddIndicators = true)]
+    public class JCAMP_FxScalper_ML : Robot
+    {
+        #region Parameters
+
+        [Parameter("=== ML SETTINGS ===", DefaultValue = "")]
+        public string MLHeader { get; set; }
+
+        [Parameter("ML Threshold (LONG)", DefaultValue = 0.65, MinValue = 0.50, MaxValue = 0.90, Step = 0.05)]
+        public double MLThreshold { get; set; }
+
+        [Parameter("ML Threshold (SHORT)", DefaultValue = 0.55, MinValue = 0.50, MaxValue = 0.90, Step = 0.05)]
+        public double MLThresholdShort { get; set; }
+
+        [Parameter("Enable SHORT Trading", DefaultValue = false)]
+        public bool EnableShortTrading { get; set; }
+
+        [Parameter("API URL", DefaultValue = "http://localhost:8000/predict")]
+        public string ApiUrl { get; set; }
+
+        [Parameter("API Timeout (ms)", DefaultValue = 5000, MinValue = 1000, MaxValue = 30000)]
+        public int ApiTimeoutMs { get; set; }
+
+        [Parameter("=== ALERTS & RECOVERY ===", DefaultValue = "")]
+        public string AlertHeader { get; set; }
+
+        [Parameter("Enable Email Alerts", DefaultValue = false)]
+        public bool EnableEmailAlerts { get; set; }
+
+        [Parameter("Alert Email (recipient)", DefaultValue = "jessiecampanero23@gmail.com")]
+        public string AlertEmail { get; set; }
+
+        [Parameter("Sender Email", DefaultValue = "jessiecampanero23@gmail.com")]
+        public string SenderEmail { get; set; }
+
+        [Parameter("Sender Password / App Password", DefaultValue = "")]
+        public string GmailAppPassword { get; set; }
+
+        [Parameter("SMTP Host", DefaultValue = "smtp.gmail.com")]
+        public string SmtpHost { get; set; }
+
+        [Parameter("SMTP Port", DefaultValue = 587)]
+        public int SmtpPort { get; set; }
+
+        [Parameter("Auto-Restart API Service", DefaultValue = true)]
+        public bool AutoRestartService { get; set; }
+
+        [Parameter("VPS SSH Host", DefaultValue = "91.99.227.165")]
+        public string VpsSshHost { get; set; }
+
+        [Parameter("VPS SSH User", DefaultValue = "root")]
+        public string VpsSshUser { get; set; }
+
+        [Parameter("SSH Key Path", DefaultValue = "")]
+        public string SshKeyPath { get; set; }
+
+        [Parameter("VPS Service Name", DefaultValue = "jcamp-predict")]
+        public string VpsServiceName { get; set; }
+
+        [Parameter("=== RISK MANAGEMENT ===", DefaultValue = "")]
+        public string RiskHeader { get; set; }
+
+        [Parameter("Risk Per Trade %", DefaultValue = 1.0, MinValue = 0.5, MaxValue = 2.0, Step = 0.25)]
+        public double RiskPercent { get; set; }
+
+        [Parameter("SL ATR Multiplier", DefaultValue = 1.5)]
+        public double SlAtrMult { get; set; }
+
+        [Parameter("TP ATR Multiplier", DefaultValue = 4.5)]
+        public double TpAtrMult { get; set; }
+
+        [Parameter("Timeout Bars", DefaultValue = 72, MinValue = 5)]
+        public int TimeoutBars { get; set; }
+
+        [Parameter("Daily Loss Limit (R)", DefaultValue = -2.0)]
+        public double DailyLossLimitR { get; set; }
+
+        [Parameter("Monthly DD Limit %", DefaultValue = 6.0)]
+        public double MonthlyDDPercent { get; set; }
+
+        [Parameter("Max Consecutive Losses", DefaultValue = 8)]
+        public int MaxConsecLosses { get; set; }
+
+        [Parameter("Max Positions", DefaultValue = 1)]
+        public int MaxPositions { get; set; }
+
+        [Parameter("Enable Trading", DefaultValue = false)]
+        public bool EnableTrading { get; set; }
+
+        [Parameter("=== TESTING ===", DefaultValue = "")]
+        public string TestHeader { get; set; }
+
+        [Parameter("Force Test Trade (LONG, fires once)", DefaultValue = false)]
+        public bool ForceTestTrade { get; set; }
+
+        #endregion
+
+        #region Private Fields
+
+        private const string BOT_VERSION = "1.0.0";
+        private const string BOT_LABEL = "JCAMP_FxScalper_ML";
+
+        private FeatureComputer _features;
+        private HttpClient _httpClient;
+
+        // API health tracking
+        private int _consecutiveApiFailures = 0;
+        private bool _apiDownAlertSent = false;
+        private const int API_ALERT_THRESHOLD = 3;
+
+        // Auto-restart tracking
+        private DateTime _lastRestartAttempt = DateTime.MinValue;
+        private int _totalRestartAttempts = 0;
+        private const int RESTART_COOLDOWN_MIN = 30;
+
+        // Indicators (same as DataCollector)
+        private SimpleMovingAverage _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275;
+        private RelativeStrengthIndex _rsiM5;
+        private DirectionalMovementSystem _adxM5;
+        private AverageTrueRange _atrM5_14;
+        private BollingerBands _bbM5;
+
+        private Bars _m15, _m30, _h1, _h4;
+        private SimpleMovingAverage _smaM15_200, _smaM30_200, _smaH1_200, _smaH4_200;
+        private RelativeStrengthIndex _rsiM15, _rsiM30;
+        private AverageTrueRange _atrM15_14, _atrH1_14;
+
+        // Risk tracking
+        private double _dailyRLoss = 0.0;
+        private int _dailyLossingTrades = 0;
+        private DateTime _lastTradingDay = DateTime.MinValue;
+        private int _consecutiveLosses = 0;
+        private double _monthStartEquity = 0.0;
+        private int _lastTradingMonth = 0;
+        private bool _dailyLimitHit = false;
+        private bool _monthlyLimitHit = false;
+        private bool _consecLimitHit = false;
+
+        // Heartbeat: confirms cBot is alive on the cTrader side, independent
+        // of the FastAPI/VPS logs. Logs every HEARTBEAT_MIN minutes on bar close.
+        private DateTime _lastHeartbeat = DateTime.MinValue;
+        private const int HEARTBEAT_MIN = 10;
+
+        // ML status report: latest predictions + tier vs threshold, every 20 min.
+        private DateTime _lastMlReport = DateTime.MinValue;
+        private const int ML_REPORT_MIN = 20;
+        private double _lastPLong = -1;
+        private double _lastPShort = -1;
+        private DateTime _lastPredictTime = DateTime.MinValue;
+
+        // Test trade: fires once per session when ForceTestTrade=true
+        private bool _testTradeFired = false;
+
+        #endregion
+
+        #region Initialization
+
+        protected override void OnStart()
+        {
+            Print("========================================");
+            Print($"JCAMP FxScalper ML v{BOT_VERSION}");
+            Print($"Mode: {(EnableTrading ? "LIVE" : "SIMULATION")}");
+            Print($"Threshold: {MLThreshold}");
+            Print($"API: {ApiUrl}");
+            Print("========================================");
+
+            // Validate timeframe
+            if (TimeFrame != TimeFrame.Minute5)
+            {
+                Print("ERROR: Must run on M5!");
+                Stop();
+                return;
+            }
+
+            // Init HTF bars
+            _m15 = MarketData.GetBars(TimeFrame.Minute15);
+            _m30 = MarketData.GetBars(TimeFrame.Minute30);
+            _h1  = MarketData.GetBars(TimeFrame.Hour);
+            _h4  = MarketData.GetBars(TimeFrame.Hour4);
+
+            // Init M5 indicators
+            _smaM5_50  = Indicators.SimpleMovingAverage(Bars.ClosePrices, 50);
+            _smaM5_100 = Indicators.SimpleMovingAverage(Bars.ClosePrices, 100);
+            _smaM5_200 = Indicators.SimpleMovingAverage(Bars.ClosePrices, 200);
+            _smaM5_275 = Indicators.SimpleMovingAverage(Bars.ClosePrices, 275);
+            _rsiM5     = Indicators.RelativeStrengthIndex(Bars.ClosePrices, 14);
+            _adxM5     = Indicators.DirectionalMovementSystem(14);
+            _atrM5_14  = Indicators.AverageTrueRange(14, MovingAverageType.Simple);
+            _bbM5      = Indicators.BollingerBands(Bars.ClosePrices, 20, 2,
+                                                    MovingAverageType.Simple);
+
+            // Init HTF indicators
+            _smaM15_200 = Indicators.SimpleMovingAverage(_m15.ClosePrices, 200);
+            _smaM30_200 = Indicators.SimpleMovingAverage(_m30.ClosePrices, 200);
+            _smaH1_200  = Indicators.SimpleMovingAverage(_h1.ClosePrices,  200);
+            _smaH4_200  = Indicators.SimpleMovingAverage(_h4.ClosePrices,  200);
+            _rsiM15     = Indicators.RelativeStrengthIndex(_m15.ClosePrices, 14);
+            _rsiM30     = Indicators.RelativeStrengthIndex(_m30.ClosePrices, 14);
+            _atrM15_14  = Indicators.AverageTrueRange(_m15, 14,
+                                                       MovingAverageType.Simple);
+            _atrH1_14   = Indicators.AverageTrueRange(_h1, 14,
+                                                       MovingAverageType.Simple);
+
+            // Init shared feature computer
+            _features = new FeatureComputer();
+            _features.Reset();  // Initialize stateful fields (atrHistory, etc.)
+
+            // Init HTTP client
+            _httpClient = new HttpClient();
+            _httpClient.Timeout = TimeSpan.FromMilliseconds(ApiTimeoutMs);
+
+            // Init risk tracking
+            _monthStartEquity = Account.Equity;
+            _lastTradingMonth = Server.Time.Month;
+        }
+
+        #endregion
+
+        #region Main Loop
+
+        protected override void OnBar()
+        {
+            // Warmup check (same as DataCollector)
+            if (Bars.ClosePrices.Count < 300) return;
+            if (_h4.ClosePrices.Count < 200) return;
+
+            // Heartbeat: prove cBot is alive on cTrader independent of VPS logs.
+            if ((Server.Time - _lastHeartbeat).TotalMinutes >= HEARTBEAT_MIN)
+            {
+                int openCount = Positions.FindAll(BOT_LABEL, SymbolName).Length;
+                Print($"[HEARTBEAT] {Server.Time:yyyy-MM-dd HH:mm} UTC | " +
+                      $"Bars={Bars.ClosePrices.Count} | OpenPos={openCount} | " +
+                      $"ApiFails={_consecutiveApiFailures} | " +
+                      $"DailyR={_dailyRLoss:F2} | Equity={Account.Equity:F2}");
+                _lastHeartbeat = Server.Time;
+            }
+
+            // ML status report every 20 min: latest p_win values vs thresholds.
+            // Tier = IDLE (<0.50) / WATCHING (>=0.50, <threshold) / FIRE (>=threshold).
+            if ((Server.Time - _lastMlReport).TotalMinutes >= ML_REPORT_MIN)
+            {
+                if (_lastPredictTime == DateTime.MinValue)
+                {
+                    Print($"[ML REPORT] No predictions yet (EnableTrading={EnableTrading}, " +
+                          $"ApiFails={_consecutiveApiFailures})");
+                }
+                else
+                {
+                    double age = (Server.Time - _lastPredictTime).TotalMinutes;
+                    Print($"[ML REPORT] LONG p={_lastPLong:F3} {TierFor(_lastPLong, MLThreshold)} " +
+                          $"(thr {MLThreshold:F2}) | " +
+                          $"SHORT p={_lastPShort:F3} {TierFor(_lastPShort, MLThresholdShort)} " +
+                          $"(thr {MLThresholdShort:F2}) | age={age:F0}min");
+                }
+                _lastMlReport = Server.Time;
+            }
+
+            int closedBarIdx = Bars.ClosePrices.Count - 2;
+
+            // Reset daily counters
+            CheckDayReset();
+            CheckMonthReset();
+
+            // CRITICAL FIX #1: Compute features ONCE unconditionally at the top
+            // Stateful trackers (atr_percentile, mtf_alignment_duration, bars_since_flip)
+            // must be updated on EVERY bar, including bars where position is open or
+            // risk limits are hit. Skipping bars creates gaps in rolling windows.
+            var feat = _features.Compute(Bars, closedBarIdx, Symbol,
+                _smaM5_50, _smaM5_100, _smaM5_200, _smaM5_275,
+                _smaM15_200, _smaM30_200, _smaH1_200, _smaH4_200,
+                _rsiM5, _rsiM15, _rsiM30,
+                _adxM5, _atrM5_14, _atrM15_14, _atrH1_14, _bbM5);
+
+            if (feat == null) return;
+
+            // Check risk limits — pass features to management logic
+            if (_dailyLimitHit || _monthlyLimitHit || _consecLimitHit)
+            {
+                return; // Features already computed; just don't trade
+            }
+
+            // Manage open position (if exists) — pass pre-computed features
+            var openPos = Positions.FindAll(BOT_LABEL, SymbolName);
+            if (openPos.Length >= MaxPositions)
+            {
+                ManageOpenTrade(openPos[0], feat, closedBarIdx);
+                return;
+            }
+
+            // Skip entry logic if trading disabled (feature skew test mode)
+            if (!EnableTrading) return;
+
+            // Test trade override — bypasses ML thresholds for ONE entry to verify
+            // position sizing. Fires once per session, then disables itself.
+            // Disable ForceTestTrade in cBot params after the test fills.
+            if (ForceTestTrade && !_testTradeFired)
+            {
+                _testTradeFired = true;
+                var size = ComputeOrderSize(closedBarIdx);
+                Print($"[TEST] Override LONG entry. {size.Debug}");
+                var testResult = ExecuteMarketOrder(
+                    TradeType.Buy, SymbolName, size.Volume,
+                    BOT_LABEL, size.SlPips, size.TpPips);
+                if (testResult.IsSuccessful)
+                    Print($"[TEST] SUCCESS @ {testResult.Position.EntryPrice:F5} | " +
+                          $"Volume={size.Volume:F0} units | " +
+                          $"Close manually + uncheck ForceTestTrade.");
+                else
+                    Print($"[TEST] FAILED: {testResult.Error}. {size.Debug}");
+                return;
+            }
+
+            // Entry logic: call API once, score both directions
+            var preds = CallPredictApi(feat);
+            if (preds.IsError) return;
+
+            // Cache for [ML REPORT] heartbeat
+            _lastPLong = preds.PWinLong;
+            _lastPShort = preds.PWinShort;
+            _lastPredictTime = Server.Time;
+
+            bool wantsLong  = preds.PWinLong  > MLThreshold;
+            bool wantsShort = preds.PWinShort > MLThresholdShort;
+
+            // Shadow-mode SHORT: signal still logged on VPS (every /predict
+            // call writes both probabilities to prediction_log.db). We just
+            // don't trade on it unless EnableShortTrading is true.
+            if (wantsShort && !EnableShortTrading)
+            {
+                Print($"[SHADOW] SHORT signal p={preds.PWinShort:F3} (logged, not traded)");
+            }
+
+            // Resolve direction. LONG takes priority if both fire (rare with
+            // realistic thresholds). MaxPositions=1 already enforced above.
+            TradeType? direction = null;
+            double pUsed = 0.0;
+            string label = "";
+
+            if (wantsLong)
+            {
+                direction = TradeType.Buy;
+                pUsed = preds.PWinLong;
+                label = "LONG";
+            }
+            else if (wantsShort && EnableShortTrading)
+            {
+                direction = TradeType.Sell;
+                pUsed = preds.PWinShort;
+                label = "SHORT";
+            }
+
+            if (direction == null) return;
+
+            // Position sizing — fixed math (Symbol.PipValue is per UNIT, not per lot)
+            var sizing = ComputeOrderSize(closedBarIdx);
+            Print($"[SIZING] {sizing.Debug}");
+
+            var result = ExecuteMarketOrder(
+                direction.Value, SymbolName, sizing.Volume,
+                BOT_LABEL, sizing.SlPips, sizing.TpPips);
+
+            if (result.IsSuccessful)
+            {
+                Print($"[ENTRY] {label} @ {result.Position.EntryPrice:F5} | " +
+                      $"SL={sizing.SlPips:F1}p | TP={sizing.TpPips:F1}p | " +
+                      $"Vol={sizing.Volume:F0}u (~{sizing.Volume / Symbol.LotSize:F2} lots) | " +
+                      $"p_win={pUsed:F3}");
+
+                double rr = sizing.SlPips > 0 ? sizing.TpPips / sizing.SlPips : 0.0;
+                string entryBody =
+                    $"Direction : {label}\n" +
+                    $"Entry     : {result.Position.EntryPrice:F5}\n" +
+                    $"SL / TP   : {sizing.SlPips:F1}p / {sizing.TpPips:F1}p (R:R {rr:F2})\n" +
+                    $"Volume    : {sizing.Volume:F0}u (~{sizing.Volume / Symbol.LotSize:F2} lots)\n" +
+                    $"p_win     : {pUsed:F3}\n" +
+                    $"Position  : PID{result.Position.Id}";
+                SendEmailAlert($"ENTRY {label} {SymbolName} @ {result.Position.EntryPrice:F5}", entryBody);
+            }
+            else
+            {
+                Print($"[ERROR] Order failed: {result.Error}");
+                SendEmailAlert($"ORDER FAILED {SymbolName}", $"Error: {result.Error}");
+            }
+        }
+
+        /// <summary>
+        /// Computes order volume in UNITS using risk-based sizing.
+        /// FIX: Symbol.PipValue is denominated in account currency PER UNIT (not per lot).
+        /// Previous code multiplied as if PipValue were per lot, producing volumes
+        /// off by Symbol.LotSize (100,000 for EURUSD), e.g. 9,580 lots instead of 0.10.
+        /// Includes a 10x-equity notional cap as a safety net for future regressions.
+        /// </summary>
+        private OrderSize ComputeOrderSize(int closedBarIdx)
+        {
+            double atr = _atrM5_14.Result[closedBarIdx];
+            double atrPips = atr / Symbol.PipSize;
+            double rawSlPips = SlAtrMult * atrPips;
+            double slPips = Math.Max(rawSlPips, 5.0);
+            // Scale TP by the same factor SL was scaled, so the SL floor can never
+            // collapse the configured R:R (regression guard against the v1.1 bug).
+            double scale = rawSlPips > 0 ? slPips / rawSlPips : 1.0;
+            double tpPips = TpAtrMult * atrPips * scale;
+
+            double targetRR = TpAtrMult / SlAtrMult;
+            double realizedRR = slPips > 0 ? tpPips / slPips : 0.0;
+            if (Math.Abs(realizedRR - targetRR) > 0.01)
+                Print($"[BUG] R:R drift: target={targetRR:F2} realized={realizedRR:F2} — review sizing math");
+
+            double riskAmount = Account.Equity * (RiskPercent / 100.0);
+            double rawUnits = riskAmount / (slPips * Symbol.PipValue);
+            double volume = Symbol.NormalizeVolumeInUnits(rawUnits, RoundingMode.Down);
+            volume = Math.Max(volume, Symbol.VolumeInUnitsMin);
+
+            // Safety: cap notional at 10x equity. Defends against pipValue/leverage
+            // regressions; if hit, log it loudly so the bug is obvious.
+            double price = Bars.ClosePrices.LastValue;
+            double notional = volume * price;
+            double maxNotional = Account.Equity * 10.0;
+            bool capped = false;
+            if (notional > maxNotional)
+            {
+                volume = Symbol.NormalizeVolumeInUnits(maxNotional / price, RoundingMode.Down);
+                volume = Math.Max(volume, Symbol.VolumeInUnitsMin);
+                capped = true;
+            }
+
+            string debug = $"ATR={atr:F5} SL={slPips:F1}p TP={tpPips:F1}p RR={realizedRR:F2} | " +
+                           $"Risk=${riskAmount:F2} PipVal/unit=${Symbol.PipValue:F6} | " +
+                           $"Vol={volume:F0}u (~{volume / Symbol.LotSize:F2} lots)" +
+                           (capped ? " [NOTIONAL CAPPED]" : "");
+
+            return new OrderSize
+            {
+                Volume = volume,
+                SlPips = slPips,
+                TpPips = tpPips,
+                Debug = debug,
+            };
+        }
+
+        private struct OrderSize
+        {
+            public double Volume;
+            public double SlPips;
+            public double TpPips;
+            public string Debug;
+        }
+
+        private static string TierFor(double p, double threshold)
+        {
+            if (p < 0) return "N/A";
+            if (p >= threshold) return "FIRE";
+            if (p >= 0.50) return "WATCHING";
+            return "IDLE";
+        }
+
+        /// <summary>
+        /// Manage open position using already-computed features for this bar.
+        /// Called only when position is open. Features are FRESH (computed at OnBar top).
+        /// </summary>
+        private void ManageOpenTrade(Position pos, Dictionary<string, double> features, int closedBarIdx)
+        {
+            // Placeholder for future +2R re-score logic
+            // When profit >= +2R: re-score with current features to decide TP extension
+            // For v1.0: just hold position with original TP
+            // Future: extend TP to 6.0×ATR if p_win_long >= threshold at +2R milestone
+        }
+
+        #endregion
+
+        #region API Client
+
+        private struct Predictions
+        {
+            public double PWinLong;
+            public double PWinShort;
+            public bool IsError;
+        }
+
+        private static readonly Predictions ERROR_PREDICTIONS =
+            new Predictions { PWinLong = -1, PWinShort = -1, IsError = true };
+
+        private bool TryParseProbField(string json, string field, out double value)
+        {
+            value = -1;
+            int idx = json.IndexOf("\"" + field + "\":");
+            if (idx < 0) return false;
+
+            int valStart = idx + ("\"" + field + "\":").Length;
+            int valEnd = json.IndexOfAny(new[] { ',', '}' }, valStart);
+            if (valEnd < 0) return false;
+
+            string valStr = json.Substring(valStart, valEnd - valStart).Trim();
+            return double.TryParse(valStr, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        private Predictions CallPredictApi(Dictionary<string, double> features)
+        {
+            // Build JSON payload once — reused on retry
+            var sb = new StringBuilder();
+            sb.Append("{\"symbol\":\"").Append(SymbolName).Append("\",");
+            sb.Append("\"timestamp\":\"").Append(Server.Time.ToString("o")).Append("\",");
+            sb.Append("\"features\":{");
+
+            bool first = true;
+            foreach (var name in FeatureComputer.FEATURE_NAMES)
+            {
+                if (!first) sb.Append(",");
+                sb.Append("\"").Append(name).Append("\":");
+                sb.Append(features[name].ToString("G17"));
+                first = false;
+            }
+            sb.Append("}}");
+
+            string payload = sb.ToString();
+
+            // One retry: attempt 1 → short wait → attempt 2
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try
+                {
+                    if (attempt == 2)
+                        System.Threading.Thread.Sleep(1000); // 1 s before retry
+
+                    var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                    var response = _httpClient.PostAsync(ApiUrl, content).Result;
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Print($"[API] Error: HTTP {response.StatusCode}");
+                        if (attempt == 2) { RecordApiFailure(); return ERROR_PREDICTIONS; }
+                        continue;
+                    }
+
+                    var json = response.Content.ReadAsStringAsync().Result;
+
+                    if (!TryParseProbField(json, "p_win_long", out double pLong))
+                    {
+                        Print("[API] Missing or unparsable p_win_long in response");
+                        return ERROR_PREDICTIONS;
+                    }
+
+                    if (!TryParseProbField(json, "p_win_short", out double pShort))
+                    {
+                        Print("[API] Missing or unparsable p_win_short in response");
+                        return ERROR_PREDICTIONS;
+                    }
+
+                    RecordApiSuccess();
+                    return new Predictions
+                    {
+                        PWinLong = pLong,
+                        PWinShort = pShort,
+                        IsError = false,
+                    };
+                }
+                catch (Exception ex)
+                {
+                    if (attempt == 1)
+                        Print($"[API] Exception (attempt 1, retrying): {ex.Message}");
+                    else
+                    {
+                        Print($"[API] Exception: {ex.Message}");
+                        RecordApiFailure();
+                    }
+                }
+            }
+
+            return ERROR_PREDICTIONS;
+        }
+
+        private void RecordApiFailure()
+        {
+            _consecutiveApiFailures++;
+
+            if (_consecutiveApiFailures == API_ALERT_THRESHOLD)
+            {
+                string msg = $"API service down — {_consecutiveApiFailures} consecutive failures " +
+                             $"({Server.Time:yyyy-MM-dd HH:mm} UTC). Trading suspended. " +
+                             $"Auto-restart will be attempted.";
+                Print($"[ALERT] *** API SERVICE DOWN *** {msg}");
+                SendEmailAlert("JCAMP FxScalper — API Service DOWN", msg);
+                TryRestartService();
+            }
+            else if (_consecutiveApiFailures > API_ALERT_THRESHOLD)
+            {
+                // Retry restart every RESTART_COOLDOWN_MIN minutes
+                if (AutoRestartService &&
+                    (Server.Time - _lastRestartAttempt).TotalMinutes >= RESTART_COOLDOWN_MIN)
+                {
+                    Print($"[ALERT] *** API STILL DOWN *** — {_consecutiveApiFailures} failures " +
+                          $"({_consecutiveApiFailures * 5} min). Retrying service restart...");
+                    TryRestartService();
+                }
+                else if (_consecutiveApiFailures % 12 == 0) // log reminder every ~1 hour
+                {
+                    Print($"[ALERT] API still down — {_consecutiveApiFailures} failures " +
+                          $"({_consecutiveApiFailures * 5} min).");
+                }
+            }
+        }
+
+        private void RecordApiSuccess()
+        {
+            if (_consecutiveApiFailures >= API_ALERT_THRESHOLD)
+            {
+                string msg = $"API service recovered after {_consecutiveApiFailures} failures " +
+                             $"({_consecutiveApiFailures * 5} min downtime). Trading resumed.";
+                Print($"[API] *** SERVICE RECOVERED *** {msg}");
+                SendEmailAlert("JCAMP FxScalper — API Service RECOVERED", msg);
+            }
+            _consecutiveApiFailures = 0;
+        }
+
+        private void TryRestartService()
+        {
+            if (!AutoRestartService) return;
+
+            _lastRestartAttempt = Server.Time;
+            _totalRestartAttempts++;
+
+            try
+            {
+                // SSH into the Hetzner VPS and restart the systemd service.
+                // Requires OpenSSH client (built into Windows 10/11) and a
+                // passwordless SSH key pair — run once manually to add VPS to known_hosts:
+                //   ssh -i <SshKeyPath> root@91.99.227.165
+                string keyArgs = string.IsNullOrWhiteSpace(SshKeyPath)
+                    ? ""
+                    : $"-i \"{SshKeyPath}\" ";
+
+                string sshArgs = $"{keyArgs}" +
+                                 $"-o StrictHostKeyChecking=no " +
+                                 $"-o ConnectTimeout=10 " +
+                                 $"-o BatchMode=yes " +
+                                 $"{VpsSshUser}@{VpsSshHost} " +
+                                 $"\"systemctl restart {VpsServiceName}\"";
+
+                var psi = new ProcessStartInfo("ssh", sshArgs)
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using (var proc = Process.Start(psi))
+                {
+                    proc.WaitForExit(15000);
+                    string err = proc.StandardError.ReadToEnd().Trim();
+                    if (proc.ExitCode == 0)
+                        Print($"[RECOVERY] SSH restart of '{VpsServiceName}' on {VpsSshHost} succeeded " +
+                              $"(attempt #{_totalRestartAttempts}). Service should be up in ~5s.");
+                    else
+                        Print($"[RECOVERY] SSH restart failed (exit {proc.ExitCode}): {err}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"[RECOVERY] SSH restart exception: {ex.Message}");
+            }
+        }
+
+        private void SendEmailAlert(string subject, string body)
+        {
+            if (!EnableEmailAlerts) return;
+            if (string.IsNullOrWhiteSpace(GmailAppPassword)) return;
+
+            try
+            {
+                using (var smtp = new SmtpClient(SmtpHost, SmtpPort))
+                {
+                    smtp.EnableSsl = true;
+                    smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
+                    smtp.UseDefaultCredentials = false;
+                    smtp.Credentials = new NetworkCredential(SenderEmail, GmailAppPassword);
+                    smtp.Timeout = 10000;
+
+                    string fullBody = $"{body}\n\n" +
+                                     $"Symbol : {SymbolName}\n" +
+                                     $"Server : {Server.Time:yyyy-MM-dd HH:mm:ss} UTC\n" +
+                                     $"API URL: {ApiUrl}\n" +
+                                     $"Bot    : JCAMP FxScalper ML v{BOT_VERSION}";
+
+                    var mail = new MailMessage(
+                        SenderEmail,
+                        AlertEmail,
+                        $"[cBot] {subject}",
+                        fullBody);
+
+                    smtp.Send(mail);
+                    Print($"[EMAIL] Alert sent: {subject}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"[EMAIL] Failed to send alert: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        #region Risk Management
+
+        private void CheckDayReset()
+        {
+            if (Server.Time.Date != _lastTradingDay.Date)
+            {
+                _dailyRLoss = 0;
+                _dailyLossingTrades = 0;
+                _dailyLimitHit = false;
+                _lastTradingDay = Server.Time;
+            }
+        }
+
+        private void CheckMonthReset()
+        {
+            if (Server.Time.Month != _lastTradingMonth)
+            {
+                _monthStartEquity = Account.Equity;
+                _lastTradingMonth = Server.Time.Month;
+                _monthlyLimitHit = false;
+            }
+
+            // Check monthly DD
+            double ddPercent = ((_monthStartEquity - Account.Equity) /
+                                _monthStartEquity) * 100;
+            if (ddPercent >= MonthlyDDPercent)
+            {
+                if (!_monthlyLimitHit)
+                {
+                    Print($"[RISK] Monthly DD limit hit: {ddPercent:F1}% >= {MonthlyDDPercent}%");
+                    _monthlyLimitHit = true;
+
+                    // Close all positions
+                    foreach (var pos in Positions.FindAll(BOT_LABEL, SymbolName))
+                        ClosePosition(pos);
+                }
+            }
+        }
+
+        protected override void OnPositionClosed(Position position)
+        {
+            if (position.Label != BOT_LABEL) return;
+
+            double atr = _atrM5_14.Result.LastValue;
+            double riskPips = SlAtrMult * atr / Symbol.PipSize;
+            double rMultiple = position.Pips / riskPips;
+
+            string exitBody =
+                $"Direction : {position.TradeType}\n" +
+                $"Entry     : {position.EntryPrice:F5}\n" +
+                $"Pips      : {position.Pips:F1}p\n" +
+                $"R-multiple: {rMultiple:+F2}R\n" +
+                $"Net P/L   : {position.NetProfit:F2} {Account.Asset.Name}\n" +
+                $"Position  : PID{position.Id}";
+
+            if (position.NetProfit < 0)
+            {
+                _dailyRLoss += rMultiple; // rMultiple is negative
+                _dailyLossingTrades++;
+                _consecutiveLosses++;
+
+                Print($"[EXIT] LOSS {rMultiple:+F2}R | Daily: {_dailyRLoss:F2}R | " +
+                      $"Consec: {_consecutiveLosses}");
+                SendEmailAlert(
+                    $"EXIT LOSS {rMultiple:+F2}R {SymbolName}",
+                    exitBody + $"\nDaily R   : {_dailyRLoss:F2}R\nConsec    : {_consecutiveLosses}");
+
+                // Check daily limit
+                if (_dailyRLoss <= DailyLossLimitR)
+                {
+                    Print($"[RISK] Daily loss limit hit: {_dailyRLoss:F2}R");
+                    _dailyLimitHit = true;
+                }
+
+                // Check consecutive limit
+                if (_consecutiveLosses >= MaxConsecLosses)
+                {
+                    Print($"[RISK] Consecutive loss limit hit: {_consecutiveLosses}");
+                    _consecLimitHit = true;
+                }
+            }
+            else
+            {
+                _consecutiveLosses = 0; // Reset on win
+                Print($"[EXIT] WIN {rMultiple:+F2}R | Daily: {_dailyRLoss:F2}R");
+                SendEmailAlert(
+                    $"EXIT WIN {rMultiple:+F2}R {SymbolName}",
+                    exitBody + $"\nDaily R   : {_dailyRLoss:F2}R");
+            }
+        }
+
+        #endregion
+
+        #region OnStop
+
+        protected override void OnStop()
+        {
+            _httpClient?.Dispose();
+            Print("========================================");
+            Print($"JCAMP FxScalper ML v{BOT_VERSION} STOPPED");
+            Print("========================================");
+        }
+
+        #endregion
+    }
+}
