@@ -117,6 +117,15 @@ namespace cAlgo.Robots
         [Parameter("Enable Trading", DefaultValue = false)]
         public bool EnableTrading { get; set; }
 
+        [Parameter("=== BACKTEST SETTINGS ===", DefaultValue = "")]
+        public string BacktestHeader { get; set; }
+
+        [Parameter("Enable Backtest Mode", DefaultValue = false)]
+        public bool EnableBacktest { get; set; }
+
+        [Parameter("Warmup Days Before Trading", DefaultValue = 40, MinValue = 1, MaxValue = 100)]
+        public int BacktestWarmupDays { get; set; }
+
         [Parameter("=== TESTING ===", DefaultValue = "")]
         public string TestHeader { get; set; }
 
@@ -181,6 +190,11 @@ namespace cAlgo.Robots
         // Test trade: fires once per session when ForceTestTrade=true
         private bool _testTradeFired = false;
 
+        // Backtest warmup tracking
+        private int _backtest_BarsSinceStart = 0;
+        private bool _backtest_WarmupComplete = false;
+        private int _backtest_RequiredBars = 0;
+
         #endregion
 
         #region Initialization
@@ -242,6 +256,14 @@ namespace cAlgo.Robots
             // Init risk tracking
             _monthStartEquity = Account.Equity;
             _lastTradingMonth = Server.Time.Month;
+
+            // Init backtest warmup (only used if EnableBacktest=true)
+            if (EnableBacktest)
+            {
+                _backtest_RequiredBars = BacktestWarmupDays * (24 * 60 / 5); // M5 bars in N days
+                Print($"[BACKTEST] Warmup enabled: {BacktestWarmupDays} days = {_backtest_RequiredBars} bars");
+                Print($"[BACKTEST] Trading will start after bar #{_backtest_RequiredBars}");
+            }
         }
 
         #endregion
@@ -253,6 +275,24 @@ namespace cAlgo.Robots
             // Warmup check (same as DataCollector)
             if (Bars.ClosePrices.Count < 300) return;
             if (_h4.ClosePrices.Count < 200) return;
+
+            // Backtest warmup check: skip trading until N days have passed
+            if (EnableBacktest)
+            {
+                _backtest_BarsSinceStart = Bars.ClosePrices.Count - 1;
+                if (_backtest_BarsSinceStart < _backtest_RequiredBars)
+                {
+                    if (_backtest_BarsSinceStart % 288 == 0) // Log every ~1 day (288 M5 bars)
+                        Print($"[BACKTEST] Warming up... {_backtest_BarsSinceStart}/{_backtest_RequiredBars} bars");
+                    // Still in warmup, skip this entry but continue to next bar
+                    // (features are computed, but trading is blocked below)
+                }
+                else if (!_backtest_WarmupComplete)
+                {
+                    _backtest_WarmupComplete = true;
+                    Print($"[BACKTEST] ✓ Warmup complete at bar #{_backtest_BarsSinceStart}. Trading enabled.");
+                }
+            }
 
             // Heartbeat: prove cBot is alive on cTrader independent of VPS logs.
             if ((Server.Time - _lastHeartbeat).TotalMinutes >= HEARTBEAT_MIN)
@@ -319,6 +359,9 @@ namespace cAlgo.Robots
 
             // Skip entry logic if trading disabled (feature skew test mode)
             if (!EnableTrading) return;
+
+            // Skip entry during backtest warmup period
+            if (EnableBacktest && !_backtest_WarmupComplete) return;
 
             // Test trade override — bypasses ML thresholds for ONE entry to verify
             // position sizing. Fires once per session, then disables itself.
@@ -395,10 +438,21 @@ namespace cAlgo.Robots
                       $"SL={sizing.SlPips:F1}p | TP={sizing.TpPips:F1}p | " +
                       $"Vol={sizing.Volume:F0}u (~{sizing.Volume / Symbol.LotSize:F2} lots) | " +
                       $"p_win={pUsed:F3}");
+
+                double rr = sizing.SlPips > 0 ? sizing.TpPips / sizing.SlPips : 0.0;
+                string entryBody =
+                    $"Direction : {label}\n" +
+                    $"Entry     : {result.Position.EntryPrice:F5}\n" +
+                    $"SL / TP   : {sizing.SlPips:F1}p / {sizing.TpPips:F1}p (R:R {rr:F2})\n" +
+                    $"Volume    : {sizing.Volume:F0}u (~{sizing.Volume / Symbol.LotSize:F2} lots)\n" +
+                    $"p_win     : {pUsed:F3}\n" +
+                    $"Position  : PID{result.Position.Id}";
+                SendEmailAlert($"ENTRY {label} {SymbolName} @ {result.Position.EntryPrice:F5}", entryBody);
             }
             else
             {
                 Print($"[ERROR] Order failed: {result.Error}");
+                SendEmailAlert($"ORDER FAILED {SymbolName}", $"Error: {result.Error}");
             }
         }
 
@@ -412,8 +466,18 @@ namespace cAlgo.Robots
         private OrderSize ComputeOrderSize(int closedBarIdx)
         {
             double atr = _atrM5_14.Result[closedBarIdx];
-            double slPips = Math.Max(SlAtrMult * atr / Symbol.PipSize, 5.0);
-            double tpPips = TpAtrMult * atr / Symbol.PipSize;
+            double atrPips = atr / Symbol.PipSize;
+            double rawSlPips = SlAtrMult * atrPips;
+            double slPips = Math.Max(rawSlPips, 5.0);
+            // Scale TP by the same factor SL was scaled, so the SL floor can never
+            // collapse the configured R:R (regression guard against the v1.1 bug).
+            double scale = rawSlPips > 0 ? slPips / rawSlPips : 1.0;
+            double tpPips = TpAtrMult * atrPips * scale;
+
+            double targetRR = TpAtrMult / SlAtrMult;
+            double realizedRR = slPips > 0 ? tpPips / slPips : 0.0;
+            if (Math.Abs(realizedRR - targetRR) > 0.01)
+                Print($"[BUG] R:R drift: target={targetRR:F2} realized={realizedRR:F2} — review sizing math");
 
             double riskAmount = Account.Equity * (RiskPercent / 100.0);
             double rawUnits = riskAmount / (slPips * Symbol.PipValue);
@@ -433,7 +497,7 @@ namespace cAlgo.Robots
                 capped = true;
             }
 
-            string debug = $"ATR={atr:F5} SL={slPips:F1}p TP={tpPips:F1}p | " +
+            string debug = $"ATR={atr:F5} SL={slPips:F1}p TP={tpPips:F1}p RR={realizedRR:F2} | " +
                            $"Risk=${riskAmount:F2} PipVal/unit=${Symbol.PipValue:F6} | " +
                            $"Vol={volume:F0}u (~{volume / Symbol.LotSize:F2} lots)" +
                            (capped ? " [NOTIONAL CAPPED]" : "");
@@ -757,6 +821,14 @@ namespace cAlgo.Robots
             double riskPips = SlAtrMult * atr / Symbol.PipSize;
             double rMultiple = position.Pips / riskPips;
 
+            string exitBody =
+                $"Direction : {position.TradeType}\n" +
+                $"Entry     : {position.EntryPrice:F5}\n" +
+                $"Pips      : {position.Pips:F1}p\n" +
+                $"R-multiple: {rMultiple:+F2}R\n" +
+                $"Net P/L   : {position.NetProfit:F2} {Account.Asset.Name}\n" +
+                $"Position  : PID{position.Id}";
+
             if (position.NetProfit < 0)
             {
                 _dailyRLoss += rMultiple; // rMultiple is negative
@@ -765,6 +837,9 @@ namespace cAlgo.Robots
 
                 Print($"[EXIT] LOSS {rMultiple:+F2}R | Daily: {_dailyRLoss:F2}R | " +
                       $"Consec: {_consecutiveLosses}");
+                SendEmailAlert(
+                    $"EXIT LOSS {rMultiple:+F2}R {SymbolName}",
+                    exitBody + $"\nDaily R   : {_dailyRLoss:F2}R\nConsec    : {_consecutiveLosses}");
 
                 // Check daily limit
                 if (_dailyRLoss <= DailyLossLimitR)
@@ -784,6 +859,9 @@ namespace cAlgo.Robots
             {
                 _consecutiveLosses = 0; // Reset on win
                 Print($"[EXIT] WIN {rMultiple:+F2}R | Daily: {_dailyRLoss:F2}R");
+                SendEmailAlert(
+                    $"EXIT WIN {rMultiple:+F2}R {SymbolName}",
+                    exitBody + $"\nDaily R   : {_dailyRLoss:F2}R");
             }
         }
 

@@ -66,3 +66,16 @@ Thumbs.db
 
 # Git worktrees
 .worktrees/
+
+# cTrader/cBot build artifacts (keep cbot/ folder tracked!)
+# Ignore root-level cBot project folders (duplicates/temp)
+/JCAMP_FxScalper_ML/
+/JCAMP_DataCollector/
+*.cbotset
+/Debug/
+bin/
+obj/
+*.user
+.vs/
+*.algo
+*.algo.metadata
