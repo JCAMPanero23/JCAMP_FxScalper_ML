@@ -2,10 +2,11 @@
 JCAMP FxScalper ML — Prediction Service
 ========================================
 
-FastAPI service that loads the trained LightGBM model and serves
-predictions on POST /predict.
+FastAPI service that loads the trained LightGBM LONG and SHORT models
+and serves predictions on POST /predict.
 
-Runs on localhost:8000 on the VPS alongside cTrader.
+v0.6.1 — dual-direction (returns both p_win_long and p_win_short).
+Runs on port 8000 on the VPS.
 """
 
 import time
@@ -25,7 +26,10 @@ from joblib import load
 from config import (
     FEATURE_NAMES,
     LONG_MODEL_PATH,
+    SHORT_MODEL_PATH,
     MODEL_VERSION,
+    LONG_THRESHOLD,
+    SHORT_THRESHOLD,
     DB_PATH,
 )
 
@@ -38,13 +42,14 @@ logger = logging.getLogger("predict_service")
 
 # --- Global state ---
 long_model = None
+short_model = None
 start_time = None
 request_count = 0
 
 
 # --- Database setup ---
 def init_db():
-    """Create prediction log table if it doesn't exist."""
+    """Create prediction log table if it doesn't exist; migrate older schemas."""
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS prediction_log (
@@ -53,6 +58,7 @@ def init_db():
             symbol TEXT NOT NULL,
             bar_timestamp TEXT,
             p_win_long REAL NOT NULL,
+            p_win_short REAL,
             model_version TEXT NOT NULL,
             latency_ms REAL NOT NULL,
             features_json TEXT
@@ -62,26 +68,33 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_pred_timestamp
         ON prediction_log(timestamp)
     """)
+    # Migrate older v0.5 DBs that lack p_win_short.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(prediction_log)")}
+    if "p_win_short" not in cols:
+        conn.execute("ALTER TABLE prediction_log ADD COLUMN p_win_short REAL")
+        logger.info("Migrated prediction_log: added p_win_short column.")
     conn.commit()
     conn.close()
     logger.info(f"Prediction log database ready at {DB_PATH}")
 
 
-def log_prediction(symbol: str, bar_timestamp: str, p_win_long: float,
+def log_prediction(symbol: str, bar_timestamp: str,
+                   p_win_long: float, p_win_short: float,
                    latency_ms: float, features_json: str):
     """Log a prediction to SQLite. Non-blocking best-effort."""
     try:
         conn = sqlite3.connect(str(DB_PATH))
         conn.execute(
             """INSERT INTO prediction_log
-               (timestamp, symbol, bar_timestamp, p_win_long,
+               (timestamp, symbol, bar_timestamp, p_win_long, p_win_short,
                 model_version, latency_ms, features_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 datetime.now(timezone.utc).isoformat(),
                 symbol,
                 bar_timestamp,
                 p_win_long,
+                p_win_short,
                 MODEL_VERSION,
                 latency_ms,
                 features_json,
@@ -96,28 +109,36 @@ def log_prediction(symbol: str, bar_timestamp: str, p_win_long: float,
 # --- Startup / shutdown ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model on startup, cleanup on shutdown."""
-    global long_model, start_time
+    """Load models on startup, cleanup on shutdown."""
+    global long_model, short_model, start_time
 
     logger.info("="*60)
     logger.info("JCAMP FxScalper ML — Prediction Service Starting")
     logger.info("="*60)
 
-    # Load model
+    # Load LONG model
     if not LONG_MODEL_PATH.exists():
-        logger.error(f"Model file not found: {LONG_MODEL_PATH}")
-        raise FileNotFoundError(f"Model file not found: {LONG_MODEL_PATH}")
-
+        logger.error(f"LONG model file not found: {LONG_MODEL_PATH}")
+        raise FileNotFoundError(f"LONG model file not found: {LONG_MODEL_PATH}")
     long_model = load(LONG_MODEL_PATH)
     logger.info(f"Loaded LONG model from {LONG_MODEL_PATH}")
+
+    # Load SHORT model
+    if not SHORT_MODEL_PATH.exists():
+        logger.error(f"SHORT model file not found: {SHORT_MODEL_PATH}")
+        raise FileNotFoundError(f"SHORT model file not found: {SHORT_MODEL_PATH}")
+    short_model = load(SHORT_MODEL_PATH)
+    logger.info(f"Loaded SHORT model from {SHORT_MODEL_PATH}")
+
     logger.info(f"Model version: {MODEL_VERSION}")
     logger.info(f"Expected features: {len(FEATURE_NAMES)}")
+    logger.info(f"Thresholds: LONG={LONG_THRESHOLD}, SHORT={SHORT_THRESHOLD}")
 
     # Init database
     init_db()
 
     start_time = datetime.now(timezone.utc)
-    logger.info("Service ready. Listening on http://localhost:8000")
+    logger.info("Service ready. Listening on port 8000.")
 
     yield  # App runs here
 
@@ -157,13 +178,16 @@ class PredictRequest(BaseModel):
 
 class PredictResponse(BaseModel):
     p_win_long: float
+    p_win_short: float
     model_version: str
     latency_ms: float
+    market_closed: bool = False
 
 
 class HealthResponse(BaseModel):
     status: str
-    model_loaded: bool
+    long_model_loaded: bool
+    short_model_loaded: bool
     model_version: str
     uptime_seconds: float
     total_requests: int
@@ -171,29 +195,56 @@ class HealthResponse(BaseModel):
 
 class ModelInfoResponse(BaseModel):
     model_version: str
-    model_path: str
+    long_model_path: str
+    short_model_path: str
     n_features: int
     feature_names: list[str]
-    threshold_recommendation: float
+    long_threshold: float
+    short_threshold: float
 
 
 # --- Endpoints ---
+def _is_market_closed() -> bool:
+    """Forex market closed: Friday >= 21:00 UTC, all Saturday, Sunday < 22:00 UTC."""
+    now = datetime.now(timezone.utc)
+    dow = now.weekday()  # 0=Mon … 4=Fri, 5=Sat, 6=Sun
+    return (
+        (dow == 4 and now.hour >= 21)
+        or dow == 5
+        or (dow == 6 and now.hour < 22)
+    )
+
+
 @app.post("/predict", response_model=PredictResponse)
 async def predict(req: PredictRequest):
-    """Score a single bar's features and return P(win) for LONG."""
+    """Score a single bar's features and return P(win) for both LONG and SHORT."""
     global request_count
+
+    # Weekend guard: return zero probabilities when market is closed.
+    if _is_market_closed():
+        now = datetime.now(timezone.utc)
+        logger.info(f"[WEEKEND] Market closed — zero probs returned ({now:%A %H:%M} UTC)")
+        return PredictResponse(
+            p_win_long=0.0,
+            p_win_short=0.0,
+            model_version=MODEL_VERSION,
+            latency_ms=0.0,
+            market_closed=True,
+        )
+
     t0 = time.perf_counter()
 
-    if long_model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+    if long_model is None or short_model is None:
+        raise HTTPException(status_code=503, detail="One or both models not loaded")
 
-    # Build feature array in the correct order
+    # Build feature array in the correct order (same input for both models)
     feature_array = np.array(
         [[req.features[f] for f in FEATURE_NAMES]]
     )
 
-    # Predict
+    # Predict both directions
     p_win_long = float(long_model.predict_proba(feature_array)[0, 1])
+    p_win_short = float(short_model.predict_proba(feature_array)[0, 1])
 
     latency_ms = (time.perf_counter() - t0) * 1000
     request_count += 1
@@ -206,12 +257,14 @@ async def predict(req: PredictRequest):
         symbol=req.symbol,
         bar_timestamp=req.timestamp,
         p_win_long=p_win_long,
+        p_win_short=p_win_short,
         latency_ms=latency_ms,
         features_json=features_json,
     )
 
     return PredictResponse(
         p_win_long=round(p_win_long, 6),
+        p_win_short=round(p_win_short, 6),
         model_version=MODEL_VERSION,
         latency_ms=round(latency_ms, 2),
     )
@@ -222,10 +275,12 @@ async def health():
     """Health check endpoint."""
     uptime = (datetime.now(timezone.utc) - start_time).total_seconds() \
         if start_time else 0
+    both_loaded = long_model is not None and short_model is not None
 
     return HealthResponse(
-        status="ok" if long_model is not None else "degraded",
-        model_loaded=long_model is not None,
+        status="ok" if both_loaded else "degraded",
+        long_model_loaded=long_model is not None,
+        short_model_loaded=short_model is not None,
         model_version=MODEL_VERSION,
         uptime_seconds=round(uptime, 1),
         total_requests=request_count,
@@ -234,11 +289,13 @@ async def health():
 
 @app.get("/model_info", response_model=ModelInfoResponse)
 async def model_info():
-    """Return model metadata and feature list."""
+    """Return model metadata, feature list, and recommended thresholds."""
     return ModelInfoResponse(
         model_version=MODEL_VERSION,
-        model_path=str(LONG_MODEL_PATH),
+        long_model_path=str(LONG_MODEL_PATH),
+        short_model_path=str(SHORT_MODEL_PATH),
         n_features=len(FEATURE_NAMES),
         feature_names=FEATURE_NAMES,
-        threshold_recommendation=0.65,
+        long_threshold=LONG_THRESHOLD,
+        short_threshold=SHORT_THRESHOLD,
     )

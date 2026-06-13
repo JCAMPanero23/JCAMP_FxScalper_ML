@@ -114,6 +114,9 @@ namespace cAlgo.Robots
         [Parameter("Max Positions", DefaultValue = 1)]
         public int MaxPositions { get; set; }
 
+        [Parameter("Weekend Close Hour (UTC)", DefaultValue = 21, MinValue = 18, MaxValue = 23)]
+        public int WeekendCloseHour { get; set; }
+
         [Parameter("Enable Trading", DefaultValue = false)]
         public bool EnableTrading { get; set; }
 
@@ -275,6 +278,24 @@ namespace cAlgo.Robots
             // Warmup check (same as DataCollector)
             if (Bars.ClosePrices.Count < 300) return;
             if (_h4.ClosePrices.Count < 200) return;
+
+            // Weekend close: close all open positions Friday >= WeekendCloseHour UTC.
+            // Forex market closes ~22:00 UTC Friday; we act at 21:00 to avoid slippage.
+            // Also guards Saturday/Sunday in case OnBar fires during rollover gaps.
+            if (IsMarketClosed())
+            {
+                var openPosW = Positions.FindAll(BOT_LABEL, SymbolName);
+                if (openPosW.Length > 0)
+                {
+                    foreach (var pos in openPosW)
+                    {
+                        Print($"[WEEKEND] Closing PID{pos.Id} {pos.TradeType} " +
+                              $"before weekend ({Server.Time:ddd HH:mm} UTC).");
+                        ClosePosition(pos);
+                    }
+                }
+                return;
+            }
 
             // Backtest warmup check: skip trading until N days have passed
             if (EnableBacktest)
@@ -775,6 +796,15 @@ namespace cAlgo.Robots
         #endregion
 
         #region Risk Management
+
+        private bool IsMarketClosed()
+        {
+            var dow = Server.Time.DayOfWeek;
+            var hour = Server.Time.Hour;
+            return (dow == DayOfWeek.Friday && hour >= WeekendCloseHour)
+                || dow == DayOfWeek.Saturday
+                || (dow == DayOfWeek.Sunday && hour < 22);
+        }
 
         private void CheckDayReset()
         {

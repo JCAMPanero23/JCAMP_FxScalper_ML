@@ -44,7 +44,7 @@ request_count = 0
 
 
 def init_db():
-    """Create prediction log table if missing; add p_win_short column if upgrading from v0.5."""
+    """Create prediction log table if missing; add columns for v0.6.1+ upgrades."""
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS prediction_log (
@@ -54,6 +54,7 @@ def init_db():
             bar_timestamp TEXT,
             p_win_long REAL NOT NULL,
             p_win_short REAL,
+            spread_pips REAL,
             model_version TEXT NOT NULL,
             latency_ms REAL NOT NULL,
             features_json TEXT
@@ -64,22 +65,27 @@ def init_db():
     if "p_win_short" not in cols:
         conn.execute("ALTER TABLE prediction_log ADD COLUMN p_win_short REAL")
         logger.info("Added p_win_short column to prediction_log (v0.5 -> v0.6.1 upgrade)")
+    if "spread_pips" not in cols:
+        conn.execute("ALTER TABLE prediction_log ADD COLUMN spread_pips REAL")
+        logger.info("Added spread_pips column to prediction_log (v0.6.1 -> v0.6.2 upgrade)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pred_timestamp ON prediction_log(timestamp)")
     conn.commit()
     conn.close()
     logger.info(f"Prediction log database ready at {DB_PATH}")
 
 
-def log_prediction(symbol, bar_timestamp, p_win_long, p_win_short, latency_ms, features_json):
+def log_prediction(symbol, bar_timestamp, p_win_long, p_win_short, spread_pips,
+                   latency_ms, features_json):
     try:
         conn = sqlite3.connect(str(DB_PATH))
         conn.execute(
             """INSERT INTO prediction_log
-               (timestamp, symbol, bar_timestamp, p_win_long, p_win_short,
+               (timestamp, symbol, bar_timestamp, p_win_long, p_win_short, spread_pips,
                 model_version, latency_ms, features_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (datetime.now(timezone.utc).isoformat(), symbol, bar_timestamp,
-             p_win_long, p_win_short, MODEL_VERSION, latency_ms, features_json),
+             p_win_long, p_win_short, spread_pips,
+             MODEL_VERSION, latency_ms, features_json),
         )
         conn.commit()
         conn.close()
@@ -122,6 +128,10 @@ class PredictRequest(BaseModel):
     symbol: str
     timestamp: str = ""
     features: dict[str, float]
+    # Spread in pips at the moment of the predict call. Optional for backward
+    # compatibility with older cBot versions; logged for ML retraining analysis
+    # (correlating prediction accuracy with prevailing spread).
+    spread_pips: float | None = None
 
     @field_validator("features")
     @classmethod
@@ -141,6 +151,7 @@ class PredictResponse(BaseModel):
     p_win_short: float
     model_version: str
     latency_ms: float
+    market_closed: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -161,9 +172,33 @@ class ModelInfoResponse(BaseModel):
     short_threshold: float
 
 
+def _is_market_closed() -> bool:
+    """Forex market closed: Friday >= 21:00 UTC, all Saturday, Sunday < 22:00 UTC."""
+    now = datetime.now(timezone.utc)
+    dow = now.weekday()  # 0=Mon … 4=Fri, 5=Sat, 6=Sun
+    return (
+        (dow == 4 and now.hour >= 21)
+        or dow == 5
+        or (dow == 6 and now.hour < 22)
+    )
+
+
 @app.post("/predict", response_model=PredictResponse)
 async def predict(req: PredictRequest):
     global request_count
+
+    # Weekend guard: return zero probabilities when market is closed.
+    if _is_market_closed():
+        now = datetime.now(timezone.utc)
+        logger.info(f"[WEEKEND] Market closed — zero probs returned ({now:%A %H:%M} UTC)")
+        return PredictResponse(
+            p_win_long=0.0,
+            p_win_short=0.0,
+            model_version=MODEL_VERSION,
+            latency_ms=0.0,
+            market_closed=True,
+        )
+
     t0 = time.perf_counter()
 
     if long_model is None or short_model is None:
@@ -178,7 +213,7 @@ async def predict(req: PredictRequest):
 
     features_json = json.dumps({f: req.features[f] for f in FEATURE_NAMES})
     log_prediction(req.symbol, req.timestamp, p_win_long, p_win_short,
-                   latency_ms, features_json)
+                   req.spread_pips, latency_ms, features_json)
 
     return PredictResponse(
         p_win_long=round(p_win_long, 6),
